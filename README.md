@@ -147,7 +147,7 @@ as the lab writes it:
 
 ```ts
 bgFill: 'var(--color-orange-light-5, #ff6d00)',
-midStroke: 'var(--color-orange-deep-1, #42180f1f)', // see-through steps carry alpha
+midStroke: 'var(--color-orange-deep-1, #e8e3e2)', // see-through steps: flattened onto white
 ```
 
 - **The site's variables win.** The element reads each variable from the CSS
@@ -157,9 +157,10 @@ midStroke: 'var(--color-orange-deep-1, #42180f1f)', // see-through steps carry a
 - **When the site changes those variables** (for example a theme switch), call
   `element.refreshColors()` (in React, through a `ref`). The element re-reads
   them automatically when it's attached and whenever `settings` change.
-- **See-through colours** (palette steps 1–4) are drawn over the layer beneath,
-  like stacked layers in Figma. A see-through background lets the page show
-  through.
+- **See-through colours are flattened.** A colour with opacity (palette steps
+  1–4, or a translucent variable on the site) is drawn as it looks on white, as
+  an opaque colour, so overlapping layers never mix into new colours. The lab's
+  hex fallbacks are already flattened the same way.
 - Plain hex (`#rrggbb`, `#rrggbbaa`) works too, but use palette tokens so the
   site stays on palette.
 

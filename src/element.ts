@@ -23,8 +23,10 @@ const COLOR_KEYS = (['bg', 'mid', 'high'] as const).flatMap(
 );
 const VAR = /^var\(\s*(--[\w-]+)\s*(?:,\s*(.+?)\s*)?\)$/i;
 
-// Any CSS colour → #rrggbbaa, by painting it into one pixel: handles every
-// format a site's variables might use (hex, rgb(), hsl(), oklch(), …).
+// Any CSS colour → opaque #rrggbb as it looks on white, by painting it into
+// one white pixel: handles every format a site's variables might use (hex,
+// rgb(), hsl(), oklch(), …), and flattens see-through colours (palette steps
+// 1–4) so layers never stack into new colours.
 let swatch: CanvasRenderingContext2D | null | undefined;
 function toHex(css: string): string | null {
   swatch ??= Object.assign(document.createElement('canvas'), { width: 1, height: 1 }).getContext(
@@ -39,10 +41,13 @@ function toHex(css: string): string | null {
   swatch.fillStyle = '#fff';
   swatch.fillStyle = css;
   if (swatch.fillStyle !== a) return null;
-  swatch.clearRect(0, 0, 1, 1);
+  const color = swatch.fillStyle;
+  swatch.fillStyle = '#fff';
+  swatch.fillRect(0, 0, 1, 1);
+  swatch.fillStyle = color;
   swatch.fillRect(0, 0, 1, 1);
   const px = swatch.getImageData(0, 0, 1, 1).data;
-  return `#${[...px].map((n) => n.toString(16).padStart(2, '0')).join('')}`;
+  return `#${[...px.subarray(0, 3)].map((n) => n.toString(16).padStart(2, '0')).join('')}`;
 }
 
 type Media = HTMLVideoElement | HTMLImageElement;
