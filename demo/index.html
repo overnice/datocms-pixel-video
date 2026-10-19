@@ -19,15 +19,18 @@
       <source src="./eyes.mp4" type="video/mp4" />
     </pixel-video>
 
-    <h2>preset="Mono"</h2>
-    <pixel-video preset="Mono">
-      <source src="./eyes.webm" type="video/webm" />
-      <source src="./eyes.mp4" type="video/mp4" />
-    </pixel-video>
+    <h2>The page's CSS variables win over the hex fallbacks</h2>
+    <p>This section redefines <code>--color-orange-light-5</code> as purple.</p>
+    <div style="--color-orange-light-5: #9e8ef5">
+      <pixel-video>
+        <source src="./eyes.webm" type="video/webm" />
+        <source src="./eyes.mp4" type="video/mp4" />
+      </pixel-video>
+    </div>
 
     <h2>settings (pasted from the lab's “Copy HTML snippet”)</h2>
     <pixel-video
-      settings='{"bgFill":"#1d1d6b","midFill":"#1d1d6b","highFill":"#7cf2c8","highSize":6,"hoverRadius":220}'
+      settings='{"bgFill":"var(--color-purple-deep-5, #1d2229)","shadowFill":"var(--color-purple-deep-5, #1d2229)","midFill":"var(--color-purple-light-5, #9e8ef5)","highFill":"var(--color-purple-light-0, #f6f5ff)","highStroke":"var(--color-purple-light-2, #9e8ef580)","highSize":6,"hoverRadius":220}'
     >
       <source src="./eyes.webm" type="video/webm" />
       <source src="./eyes.mp4" type="video/mp4" />

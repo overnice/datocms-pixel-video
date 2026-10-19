@@ -136,8 +136,8 @@ uniform vec2 uOffset;         // contain-fit rect of the source, device px
 uniform vec2 uDraw;
 
 uniform float uSize[4];       // per layer, device px
-uniform vec3 uFill[4];
-uniform vec3 uStroke[4];
+uniform vec4 uFill[4];         // straight (not premultiplied) alpha
+uniform vec4 uStroke[4];
 uniform float uWeight[4];
 
 uniform bool uHover;
@@ -164,12 +164,20 @@ int bucketAt(vec2 o) {
   return b < uThresholds.x ? 0 : b < uThresholds.y ? 1 : b < uThresholds.z ? 2 : 3;
 }
 
+// Paint src (straight alpha) over dst (premultiplied), like stacked layers in
+// Figma. With opaque colours this is a plain replace.
+vec4 over(vec4 dst, vec4 src) {
+  return vec4(src.rgb * src.a, src.a) + dst * (1.0 - src.a);
+}
+
 void main() {
   // Top-left origin, like a 2D canvas.
   vec2 p = vec2(gl_FragCoord.x, uRes.y - gl_FragCoord.y);
-  vec3 col = uFill[0]; // whole canvas in the background colour first: no bleed-through
+  // Whole canvas in the background colour first: no bleed-through. A
+  // see-through background lets the page show through.
+  vec4 col = over(vec4(0.0), uFill[0]);
 
-  if (!uHasFrame) { color = vec4(col, 1.0); return; }
+  if (!uHasFrame) { color = col; return; }
   vec2 local = p - uOffset;
 
   // Base mosaics, in fixed order — later layers paint over earlier ones.
@@ -182,14 +190,17 @@ void main() {
     float hw = uWeight[L] * 0.5;
     bool edge = hw > 0.0 && (min(f.x, f.y) < hw || max(f.x, f.y) >= ps - hw);
     if (bucketAt(cell * ps) == L) {
-      col = edge ? uStroke[L] : uFill[L];
+      // The background layer's fill is already the ground; painting it again
+      // would darken a see-through background.
+      if (edge) col = over(col, uStroke[L]);
+      else if (L > 0) col = over(col, uFill[L]);
     } else if (edge) {
       vec2 d = vec2(f.x < hw ? -1.0 : f.x >= ps - hw ? 1.0 : 0.0,
                     f.y < hw ? -1.0 : f.y >= ps - hw ? 1.0 : 0.0);
       if ((d.x != 0.0 && bucketAt((cell + vec2(d.x, 0.0)) * ps) == L) ||
           (d.y != 0.0 && bucketAt((cell + vec2(0.0, d.y)) * ps) == L) ||
           (d.x != 0.0 && d.y != 0.0 && bucketAt((cell + d) * ps) == L)) {
-        col = uStroke[L];
+        col = over(col, uStroke[L]);
       }
     }
   }
@@ -215,26 +226,48 @@ void main() {
         float hw = uWeight[b] * 0.5;
         vec2 q = abs(local - center);
         float m = max(q.x, q.y);
-        if (m < half_ + hw) col = (hw > 0.0 && m >= half_ - hw) ? uStroke[b] : uFill[b];
+        if (m < half_ + hw) col = over(col, (hw > 0.0 && m >= half_ - hw) ? uStroke[b] : uFill[b]);
       }
     }
   }
 
-  color = vec4(col, 1.0);
+  color = col; // premultiplied, as the canvas expects
 }`;
 
 const LAYERS = ['bg', 'shadow', 'mid', 'high'] as const;
 
-const rgbCache = new Map<string, [number, number, number]>();
-function rgb(hex: string): [number, number, number] {
-  let out = rgbCache.get(hex);
-  if (!out) {
-    const h = hex.replace('#', '');
-    const full = h.length === 3 ? [...h].map((c) => c + c).join('') : h.slice(0, 6);
-    const n = parseInt(full, 16);
-    out = [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
-    rgbCache.set(hex, out);
+type RGBA = [number, number, number, number];
+const colorCache = new Map<string, RGBA>();
+const TRANSPARENT: RGBA = [0, 0, 0, 0];
+
+/**
+ * A colour as 0–1 RGBA: #rgb, #rgba, #rrggbb, #rrggbbaa or rgb()/rgba().
+ * `var(--x, fallback)` uses its fallback: CSS variables can't be read from
+ * here, so <pixel-video> resolves them before they reach the effect.
+ */
+export function parseColor(css: string): RGBA {
+  let out = colorCache.get(css);
+  if (out) return out;
+  const value = css.trim();
+  const fallback = /^var\(\s*--[\w-]+\s*,\s*(.+)\)$/i.exec(value);
+  if (fallback) out = parseColor(fallback[1]);
+  else if (value.startsWith('#')) {
+    let h = value.slice(1);
+    if (h.length <= 4) h = [...h].map((c) => c + c).join('');
+    if (h.length === 6) h += 'ff';
+    const n = h.length === 8 ? Number.parseInt(h, 16) : NaN;
+    out = Number.isNaN(n)
+      ? TRANSPARENT
+      : [(n >>> 24) / 255, ((n >>> 16) & 255) / 255, ((n >>> 8) & 255) / 255, (n & 255) / 255];
+  } else {
+    const m = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:[\s,/]+([\d.]+%?))?\s*\)$/i.exec(
+      value,
+    );
+    const alpha = (a?: string) =>
+      a === undefined ? 1 : a.endsWith('%') ? parseFloat(a) / 100 : +a;
+    out = m ? [+m[1] / 255, +m[2] / 255, +m[3] / 255, alpha(m[4])] : TRANSPARENT;
   }
+  colorCache.set(css, out);
   return out;
 }
 
@@ -243,7 +276,8 @@ export function mountPixelVideo(
   settings: PixelVideoSettings,
   { onInvalidate }: MountOptions = {},
 ): PixelVideoEffect {
-  const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, depth: false });
+  // Alpha: a see-through background colour shows the page behind.
+  const gl = canvas.getContext('webgl2', { antialias: false, depth: false });
   if (!gl) throw new Error('WebGL2 unavailable');
 
   // ── GL resources (re-created if the context is lost and restored) ────────
@@ -445,8 +479,8 @@ export function mountPixelVideo(
 
   // Per-layer uniform arrays, reused every draw.
   const size = new Float32Array(4);
-  const fill = new Float32Array(12);
-  const stroke = new Float32Array(12);
+  const fill = new Float32Array(16);
+  const stroke = new Float32Array(16);
   const weight = new Float32Array(4);
 
   return {
@@ -501,13 +535,13 @@ export function mountPixelVideo(
       for (let i = 0; i < 4; i++) {
         const l = LAYERS[i];
         size[i] = Math.max(1, v[`${l}Size`] * dpr);
-        fill.set(rgb(v[`${l}Fill`]), i * 3);
-        stroke.set(rgb(v[`${l}Stroke`]), i * 3);
+        fill.set(parseColor(v[`${l}Fill`]), i * 4);
+        stroke.set(parseColor(v[`${l}Stroke`]), i * 4);
         weight[i] = v[`${l}StrokeWeight`] * dpr;
       }
       gl.uniform1fv(u('uSize'), size);
-      gl.uniform3fv(u('uFill'), fill);
-      gl.uniform3fv(u('uStroke'), stroke);
+      gl.uniform4fv(u('uFill'), fill);
+      gl.uniform4fv(u('uStroke'), stroke);
       gl.uniform1fv(u('uWeight'), weight);
 
       gl.uniform1f(u('uTime'), time * v.hoverSpeed);

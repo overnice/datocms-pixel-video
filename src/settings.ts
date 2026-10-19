@@ -1,8 +1,13 @@
-// Every knob of the effect, with the defaults and presets of the lab
-// prototype (overnice-2026 → lab/src/prototypes/datocms/pixel-video/params.ts).
-// The lab's "Copy React snippet" / "Copy HTML snippet" / "Copy values (JSON)"
-// buttons produce objects of exactly this shape, so a look tuned in the lab
-// pastes straight into `settings`.
+// Every knob of the effect, with the defaults of the lab prototype
+// (overnice-2026 → lab/src/prototypes/datocms/pixel-video/params.ts). The
+// lab's "Copy React snippet" / "Copy HTML snippet" buttons produce objects of
+// exactly this shape, so a look tuned in the lab pastes straight into
+// `settings`.
+//
+// Colours are DatoCMS palette tokens with their hex as the fallback,
+// `var(--color-orange-light-5, #ff6d00)`, so the site's own variables win
+// where they exist. Plain hex (#rgb, #rrggbb, with or without alpha) works
+// too.
 
 export interface PixelVideoSettings {
   /** Blur the source before posterising, in px (0–10). No-op in Safari. */
@@ -46,10 +51,10 @@ export interface PixelVideoSettings {
   hoverFalloff: number;
 }
 
-// Colours sampled from the reference recording (cartoon eyes on orange).
-const ORANGE = '#ff6100';
-const BROWN = '#3a1712';
-const YELLOW = '#e3d55a';
+// The DatoCMS palette's orange / brown / yellow (cartoon eyes on orange).
+const ORANGE = 'var(--color-orange-light-5, #ff6d00)';
+const BROWN = 'var(--color-brown-5, #351615)';
+const YELLOW = 'var(--color-yellow-5, #e7d864)';
 
 export const DEFAULTS: Readonly<PixelVideoSettings> = Object.freeze({
   smoothing: 0,
@@ -86,42 +91,17 @@ export const DEFAULTS: Readonly<PixelVideoSettings> = Object.freeze({
   hoverFalloff: 60,
 });
 
-export const PRESETS = {
-  'Fine highlights': { bgSize: 16, shadowSize: 16, midSize: 8, highSize: 4, highStrokeWeight: 0.5 },
-  Dithered: {
-    dither: true,
-    smoothing: 1,
-    bgSize: 4,
-    highSize: 4,
-    highStrokeWeight: 0,
-    hoverPixelSize: 12,
-  },
-  Mono: {
-    bgFill: '#111111',
-    shadowFill: '#444444',
-    midFill: '#888888',
-    highFill: '#f2f2f2',
-    shadowStroke: '#111111',
-    highStroke: '#111111',
-  },
-} satisfies Record<string, Partial<PixelVideoSettings>>;
-
-export type PresetName = keyof typeof PRESETS;
+const HEX = '#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})';
+/** `#hex`, or `var(--name)` / `var(--name, #hex)`. */
+export const COLOR = new RegExp(`^(?:${HEX}|var\\(\\s*--[\\w-]+\\s*(?:,\\s*${HEX}\\s*)?\\))$`, 'i');
 
 /**
- * Defaults ← preset ← settings. Unknown keys and values of the wrong type are
- * dropped (with a warning), so a pasted lab export can never break the effect.
+ * Defaults ← settings. Unknown keys, values of the wrong type and colours that
+ * aren't hex or a `var()` are dropped (with a warning), so a pasted lab export
+ * can never break the effect.
  */
-export function resolveSettings(
-  settings?: Partial<PixelVideoSettings> | null,
-  preset?: string | null,
-): PixelVideoSettings {
+export function resolveSettings(settings?: Partial<PixelVideoSettings> | null): PixelVideoSettings {
   const out: PixelVideoSettings = { ...DEFAULTS };
-  if (preset) {
-    const p = (PRESETS as Record<string, Partial<PixelVideoSettings>>)[preset];
-    if (p) Object.assign(out, p);
-    else warn(`unknown preset "${preset}" (have: ${Object.keys(PRESETS).join(', ')})`);
-  }
   for (const [key, value] of Object.entries(settings ?? {})) {
     if (!(key in DEFAULTS)) {
       warn(`ignoring unknown setting "${key}"`);
@@ -130,6 +110,10 @@ export function resolveSettings(
     const expected = typeof DEFAULTS[key as keyof PixelVideoSettings];
     if (typeof value !== expected || (expected === 'number' && !Number.isFinite(value))) {
       warn(`ignoring "${key}": expected a ${expected}, got ${JSON.stringify(value)}`);
+      continue;
+    }
+    if (/(Fill|Stroke)$/.test(key) && !COLOR.test(value as string)) {
+      warn(`ignoring "${key}": ${JSON.stringify(value)} is not a hex colour or var(--token, #hex)`);
       continue;
     }
     (out as unknown as Record<string, unknown>)[key] = value;

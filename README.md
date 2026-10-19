@@ -14,7 +14,7 @@ The package is private, so install it straight from GitHub. The build runs on
 install.
 
 ```bash
-npm i github:overnice/datocms-pixel-video#v0.2.0
+npm i github:overnice/datocms-pixel-video#v0.3.0
 ```
 
 ## Use
@@ -27,7 +27,7 @@ import { PixelVideo } from '@overnice/datocms-pixel-video/react';
 <PixelVideo
   src={['/hero.webm', '/hero.mp4']} // or one URL; an image URL works too
   poster="/hero.jpg" // optional: drawn while the video loads
-  settings={{ highFill: '#e3d55a', hoverRadius: 200 }}
+  settings={{ highFill: 'var(--color-yellow-0, #fdfff5)', hoverRadius: 200 }}
   className="hero-video"
 />;
 ```
@@ -42,7 +42,7 @@ server.
   import '@overnice/datocms-pixel-video/register';
 </script>
 
-<pixel-video src="/hero.mp4" preset="Mono"></pixel-video>
+<pixel-video src="/hero.mp4"></pixel-video>
 
 <!-- Several formats, like a <video>: -->
 <pixel-video>
@@ -128,16 +128,39 @@ React state around the video.
 Tune the look in the Overnice lab prototype ("Pixel video"), not by hand:
 
 1. Open the prototype. Upload your own video or image (or drop it onto the page)
-   and adjust the panel until it looks right.
+   and adjust the panel until it looks right. Colours are picked from the
+   DatoCMS palette (the Figma colour variables), not typed in.
 2. Click **Copy React snippet** or **Copy HTML snippet** at the top of the panel.
    You get the component with every setting filled in. If you uploaded a file,
    its name is used as the `src`.
 3. Paste the snippet into your code and point `src` at the real file.
 
-The panel's **Export → Copy values (JSON)** works too: `settings` (the prop, or
-the attribute as JSON) accepts that object as it is. Unknown keys and values of
-the wrong type are ignored with a console warning, so a pasted export can't
-break the component.
+Unknown keys, values of the wrong type and colours that aren't hex or a `var()`
+are ignored with a console warning, so a pasted snippet can't break the
+component.
+
+## Colours
+
+Every colour setting is a palette token with its hex as the fallback, exactly
+as the lab writes it:
+
+```ts
+bgFill: 'var(--color-orange-light-5, #ff6d00)',
+midStroke: 'var(--color-orange-deep-1, #42180f1f)', // see-through steps carry alpha
+```
+
+- **The site's variables win.** The element reads each variable from the CSS
+  where it sits, so if the site defines `--color-orange-light-5`, that value is
+  used, and a section that redefines it recolours the video too. Where it isn't
+  defined, the hex fallback applies.
+- **When the site changes those variables** (for example a theme switch), call
+  `element.refreshColors()` (in React, through a `ref`). The element re-reads
+  them automatically when it's attached and whenever `settings` change.
+- **See-through colours** (palette steps 1–4) are drawn over the layer beneath,
+  like stacked layers in Figma. A see-through background lets the page show
+  through.
+- Plain hex (`#rrggbb`, `#rrggbbaa`) works too, but use palette tokens so the
+  site stays on palette.
 
 ## Props / attributes
 
@@ -146,7 +169,6 @@ break the component.
 | `src`          | `src`                     | URL, or an array of URLs (React/property only); or `<source>` children               |
 | `type`         | `type`                    | `"video"` / `"image"`. By default it's an image if the URL ends in .jpg/.png/.webp/… |
 | `poster`       | `poster`                  | Image drawn, pixelated, until the video has a frame                                  |
-| `preset`       | `preset`                  | `"Fine highlights"`, `"Dithered"`, `"Mono"`. Applied before `settings`               |
 | `settings`     | `settings`                | Any subset of the settings below (JSON string as an attribute)                       |
 | `paused`       | `paused`                  | Pause the video                                                                      |
 | `playbackRate` | `playback-rate`           |                                                                                      |

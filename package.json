@@ -1,6 +1,6 @@
 {
   "name": "@overnice/datocms-pixel-video",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Video or image posterised into four pixel-mosaic layers with an organic pointer lens (WebGL2). A <pixel-video> custom element plus a React wrapper.",
   "license": "UNLICENSED",
   "private": true,

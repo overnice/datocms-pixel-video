@@ -2,14 +2,9 @@
 export { PixelVideoElement, definePixelVideo, isImageSource, TAG } from './element';
 export {
   mountPixelVideo,
+  parseColor,
   type FrameSource,
   type MountOptions,
   type PixelVideoEffect,
 } from './core';
-export {
-  DEFAULTS,
-  PRESETS,
-  resolveSettings,
-  type PixelVideoSettings,
-  type PresetName,
-} from './settings';
+export { DEFAULTS, resolveSettings, type PixelVideoSettings } from './settings';

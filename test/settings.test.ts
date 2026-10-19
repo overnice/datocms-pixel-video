@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULTS, PRESETS, resolveSettings } from '../src/settings';
+import { COLOR, DEFAULTS, resolveSettings } from '../src/settings';
+import { parseColor } from '../src/core';
 import { isImageSource } from '../src/element';
 
 describe('resolveSettings', () => {
@@ -7,27 +8,59 @@ describe('resolveSettings', () => {
     expect(resolveSettings()).toEqual(DEFAULTS);
   });
 
-  it('applies preset, then settings', () => {
-    const out = resolveSettings({ bgFill: '#000000' }, 'Mono');
-    expect(out.shadowFill).toBe(PRESETS.Mono.shadowFill);
-    expect(out.bgFill).toBe('#000000');
+  it('defaults to palette tokens with hex fallbacks', () => {
+    expect(DEFAULTS.bgFill).toBe('var(--color-orange-light-5, #ff6d00)');
+    expect(DEFAULTS.shadowFill).toBe('var(--color-brown-5, #351615)');
+    expect(DEFAULTS.highFill).toBe('var(--color-yellow-5, #e7d864)');
+  });
+
+  it('applies settings over the defaults', () => {
+    const out = resolveSettings({ bgFill: 'var(--color-purple-light-5, #9e8ef5)', highSize: 4 });
+    expect(out.bgFill).toBe('var(--color-purple-light-5, #9e8ef5)');
+    expect(out.highSize).toBe(4);
     expect(out.hoverRadius).toBe(DEFAULTS.hoverRadius);
   });
 
-  it('takes a full lab "Copy values (JSON)" export as-is', () => {
-    const lab = { ...DEFAULTS, highSize: 4, dither: true };
+  it('takes a full lab snippet as-is', () => {
+    const lab = { ...DEFAULTS, highSize: 4, dither: true, midStroke: '#42180f1f' };
     expect(resolveSettings(JSON.parse(JSON.stringify(lab)))).toEqual(lab);
   });
 
-  it('drops unknown keys, wrong types and unknown presets with a warning', () => {
+  it('drops unknown keys, wrong types and non-colours with a warning', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const out = resolveSettings(
-      { nope: 1, bgSize: '12', hover: 'yes', midSize: NaN } as never,
-      'Nope',
-    );
+    const out = resolveSettings({
+      nope: 1,
+      bgSize: '12',
+      hover: 'yes',
+      midSize: NaN,
+      bgFill: 'red',
+      midFill: 'var(--x, red)',
+    } as never);
     expect(out).toEqual(DEFAULTS);
-    expect(warn).toHaveBeenCalledTimes(5);
+    expect(warn).toHaveBeenCalledTimes(6);
     warn.mockRestore();
+  });
+});
+
+describe('colours', () => {
+  it('accepts hex and var() with a hex fallback', () => {
+    for (const c of ['#fff', '#ffff', '#42180f', '#42180f1f', 'var(--a)', 'var( --a-b , #abc )'])
+      expect(COLOR.test(c), c).toBe(true);
+    for (const c of ['red', '#12345', 'var(--a, red)', 'rgb(0 0 0)'])
+      expect(COLOR.test(c), c).toBe(false);
+  });
+
+  it('parses to 0–1 RGBA, var() via its fallback', () => {
+    expect(parseColor('#ff0000')).toEqual([1, 0, 0, 1]);
+    expect(parseColor('#f008')).toEqual([1, 0, 0, 0x88 / 255]);
+    expect(parseColor('var(--color-orange-deep-1, #42180f1f)')).toEqual([
+      0x42 / 255,
+      0x18 / 255,
+      0x0f / 255,
+      0x1f / 255,
+    ]);
+    expect(parseColor('rgba(255, 0, 0, 0.5)')).toEqual([1, 0, 0, 0.5]);
+    expect(parseColor('nonsense')).toEqual([0, 0, 0, 0]);
   });
 });
 

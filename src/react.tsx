@@ -12,7 +12,7 @@ import {
   type HTMLAttributes,
 } from 'react';
 import { definePixelVideo, TAG, type PixelVideoElement } from './element';
-import type { PixelVideoSettings, PresetName } from './settings';
+import type { PixelVideoSettings } from './settings';
 
 // Defined on import in the browser, so the element is upgraded as soon as
 // React creates it, before any of the effects below set its properties.
@@ -25,9 +25,9 @@ export interface PixelVideoProps extends Omit<HTMLAttributes<HTMLElement>, 'onEr
   type?: 'video' | 'image';
   /** Image drawn (pixelated) while the video loads. */
   poster?: string;
-  /** A built-in preset, applied before `settings`. */
-  preset?: PresetName;
-  /** Any subset of the settings — paste the lab's export here. */
+  /** Any subset of the settings: paste the lab's snippet here. Colours take
+   *  `var(--token, #hex)`; call `ref.current.refreshColors()` after the site
+   *  changes those variables. */
   settings?: Partial<PixelVideoSettings>;
   paused?: boolean;
   playbackRate?: number;
@@ -40,19 +40,7 @@ export interface PixelVideoProps extends Omit<HTMLAttributes<HTMLElement>, 'onEr
 }
 
 export const PixelVideo = forwardRef<PixelVideoElement | null, PixelVideoProps>(function PixelVideo(
-  {
-    src,
-    type,
-    poster,
-    preset,
-    settings,
-    paused,
-    playbackRate,
-    crossOrigin,
-    onLoad,
-    onError,
-    ...rest
-  },
+  { src, type, poster, settings, paused, playbackRate, crossOrigin, onLoad, onError, ...rest },
   forwarded,
 ) {
   const ref = useRef<PixelVideoElement>(null);
@@ -76,7 +64,6 @@ export const PixelVideo = forwardRef<PixelVideoElement | null, PixelVideoProps>(
   const srcKey = JSON.stringify(src);
   useEffect(() => set('src', src), [srcKey]);
 
-  useEffect(() => attr('preset', preset), [preset]);
   const settingsKey = JSON.stringify(settings ?? null);
   useEffect(() => set('settings', settings ?? null), [settingsKey]);
   useEffect(() => set('paused', !!paused), [paused]);
@@ -107,5 +94,5 @@ export const PixelVideo = forwardRef<PixelVideoElement | null, PixelVideoProps>(
   return createElement(TAG, { ...rest, ref });
 });
 
-export type { PixelVideoElement, PixelVideoSettings, PresetName };
-export { DEFAULTS, PRESETS } from './settings';
+export type { PixelVideoElement, PixelVideoSettings };
+export { DEFAULTS } from './settings';

@@ -5,16 +5,45 @@
 // prefers-reduced-motion, and falls back to the plain video/image if WebGL2 is
 // missing or the source can't be read (CORS).
 //
-//   <pixel-video src="/hero.mp4" poster="/hero.jpg" preset="Mono"></pixel-video>
+//   <pixel-video src="/hero.mp4" poster="/hero.jpg"></pixel-video>
 //
 // Attributes: src, type ("video" | "image"; otherwise guessed from the URL),
-// poster, preset, settings (JSON), paused, playback-rate, crossorigin.
+// poster, settings (JSON), paused, playback-rate, crossorigin.
+// Colours in `settings` may be CSS variables (`var(--token, #hex)`): they're
+// read from the page's CSS where the element sits, so the site's tokens win.
 // Properties: the same, plus `src` may be an array (first playable wins) and
 // `settings` takes an object. Several sources can also be given as light-DOM
 // <source> children, like a <video>.
 
 import { mountPixelVideo, type PixelVideoEffect } from './core';
 import { resolveSettings, type PixelVideoSettings } from './settings';
+
+const COLOR_KEYS = (['bg', 'shadow', 'mid', 'high'] as const).flatMap(
+  (l) => [`${l}Fill`, `${l}Stroke`] as const,
+);
+const VAR = /^var\(\s*(--[\w-]+)\s*(?:,\s*(.+?)\s*)?\)$/i;
+
+// Any CSS colour → #rrggbbaa, by painting it into one pixel: handles every
+// format a site's variables might use (hex, rgb(), hsl(), oklch(), …).
+let swatch: CanvasRenderingContext2D | null | undefined;
+function toHex(css: string): string | null {
+  swatch ??= Object.assign(document.createElement('canvas'), { width: 1, height: 1 }).getContext(
+    '2d',
+    { willReadFrequently: true },
+  );
+  if (!swatch) return null;
+  // An invalid colour leaves fillStyle unchanged: try from two seeds.
+  swatch.fillStyle = '#000';
+  swatch.fillStyle = css;
+  const a = swatch.fillStyle;
+  swatch.fillStyle = '#fff';
+  swatch.fillStyle = css;
+  if (swatch.fillStyle !== a) return null;
+  swatch.clearRect(0, 0, 1, 1);
+  swatch.fillRect(0, 0, 1, 1);
+  const px = swatch.getImageData(0, 0, 1, 1).data;
+  return `#${[...px].map((n) => n.toString(16).padStart(2, '0')).join('')}`;
+}
 
 type Media = HTMLVideoElement | HTMLImageElement;
 
@@ -104,16 +133,17 @@ export class PixelVideoElement extends Base {
     'src',
     'type',
     'poster',
-    'preset',
     'settings',
     'paused',
     'playback-rate',
     'crossorigin',
   ];
 
-  /** The resolved settings the effect draws with. Set `settings` to change
-   *  them; mutating this object directly needs a redraw to show. */
+  /** The resolved settings (defaults ← `settings`). Set `settings` to change
+   *  them. */
   readonly values: PixelVideoSettings = resolveSettings();
+  /** `values` with every colour resolved to hex: what the effect draws. */
+  #draw: PixelVideoSettings = { ...this.values };
 
   #src: string | string[] | null = null;
   #settings: Partial<PixelVideoSettings> | null = null;
@@ -163,13 +193,6 @@ export class PixelVideoElement extends Base {
     this.#applySettings();
   }
 
-  get preset() {
-    return this.getAttribute('preset');
-  }
-  set preset(value: string | null) {
-    this.#reflect('preset', value);
-  }
-
   get paused() {
     return this.hasAttribute('paused');
   }
@@ -190,6 +213,25 @@ export class PixelVideoElement extends Base {
     return this.#lastError;
   }
 
+  /** Re-read `var()` colours from the page's CSS, e.g. after the site
+   *  switches theme. (Done automatically when attached and on new settings.) */
+  refreshColors() {
+    for (const key of COLOR_KEYS) {
+      const value = this.values[key];
+      const m = VAR.exec(value);
+      let hex: string | null = null;
+      if (m) {
+        const token = this.isConnected ? getComputedStyle(this).getPropertyValue(m[1]).trim() : '';
+        hex = (token && toHex(token)) || (m[2] ? toHex(m[2]) : null);
+      } else {
+        hex = toHex(value);
+      }
+      this.#draw[key] = hex ?? 'transparent';
+    }
+    this.#effect?.invalidate();
+    this.#requestFrame();
+  }
+
   /** The hidden source element (a <video> or <img>), once loaded. */
   get media(): Media | null {
     return this.#media;
@@ -200,7 +242,7 @@ export class PixelVideoElement extends Base {
   connectedCallback() {
     // Properties set before the element was defined (e.g. by a framework)
     // shadow the accessors; re-run them through the setters.
-    for (const key of ['src', 'settings', 'preset', 'paused', 'playbackRate'] as const) {
+    for (const key of ['src', 'settings', 'paused', 'playbackRate'] as const) {
       if (Object.prototype.hasOwnProperty.call(this, key)) {
         const value = (this as Record<string, unknown>)[key];
         delete (this as Record<string, unknown>)[key];
@@ -210,7 +252,7 @@ export class PixelVideoElement extends Base {
 
     this.#applySettings();
     try {
-      this.#effect = mountPixelVideo(this.#canvas, this.values, {
+      this.#effect = mountPixelVideo(this.#canvas, this.#draw, {
         onInvalidate: this.#requestFrame,
       });
     } catch (error) {
@@ -254,7 +296,6 @@ export class PixelVideoElement extends Base {
   attributeChangedCallback(name: string, old: string | null, value: string | null) {
     if (old === value || !this.isConnected) return;
     switch (name) {
-      case 'preset':
       case 'settings':
         this.#applySettings();
         break;
@@ -284,9 +325,9 @@ export class PixelVideoElement extends Base {
         console.warn('[pixel-video] the settings attribute is not valid JSON');
       }
     }
-    Object.assign(this.values, resolveSettings(settings, this.preset));
-    this.#effect?.invalidate();
-    this.#requestFrame();
+    Object.assign(this.values, resolveSettings(settings));
+    Object.assign(this.#draw, this.values);
+    this.refreshColors();
   }
 
   #sources(): { src: string; type?: string }[] {
