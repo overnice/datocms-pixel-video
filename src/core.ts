@@ -84,6 +84,12 @@ uniform float uSize[3];       // per layer, device px
 uniform vec4 uFill[3];        // straight (not premultiplied) alpha
 uniform vec4 uStroke[3];
 uniform float uWeight;        // stroke weight, all layers, device px
+uniform bool uBgNoStroke;     // background layer drawn without strokes
+
+// Half the stroke weight of a layer's squares (0 = no stroke).
+float halfWeight(int L) {
+  return L == 0 && uBgNoStroke ? 0.0 : uWeight * 0.5;
+}
 
 uniform bool uHover;
 uniform vec2 uPointer;        // relative to the draw rect, device px
@@ -127,7 +133,7 @@ void main() {
     float ps = uSize[L];
     vec2 cell = floor(local / ps);
     vec2 f = local - cell * ps;
-    float hw = uWeight * 0.5;
+    float hw = halfWeight(L);
     bool edge = hw > 0.0 && (min(f.x, f.y) < hw || max(f.x, f.y) >= ps - hw);
     if (bucketAt(cell * ps) == L) {
       // The background layer's fill is already the ground; painting it again
@@ -163,7 +169,7 @@ void main() {
       int b = s > 0.0 ? bucketAt(cell * hs) : -1;
       if (b >= 0) {
         float half_ = hs * s * 0.5;
-        float hw = uWeight * 0.5;
+        float hw = halfWeight(b);
         vec2 q = abs(local - center);
         float m = max(q.x, q.y);
         if (m < half_ + hw) col = over(col, (hw > 0.0 && m >= half_ - hw) ? uStroke[b] : uFill[b]);
@@ -466,6 +472,7 @@ export function mountPixelVideo(
       gl.uniform4fv(u('uFill'), fill);
       gl.uniform4fv(u('uStroke'), stroke);
       gl.uniform1f(u('uWeight'), v.strokeWeight * dpr);
+      gl.uniform1i(u('uBgNoStroke'), v.bgStrokeDisabled ? 1 : 0);
 
       gl.uniform1f(u('uTime'), time * v.hoverSpeed);
       gl.uniform1f(u('uRadius'), v.hoverRadius * dpr);

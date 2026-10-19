@@ -14,6 +14,11 @@ describe('resolveSettings', () => {
     expect(DEFAULTS.highFill).toBe('var(--color-yellow-5, #e7d864)');
   });
 
+  it('keeps background strokes on by default, and lets them be turned off', () => {
+    expect(DEFAULTS.bgStrokeDisabled).toBe(false);
+    expect(resolveSettings({ bgStrokeDisabled: true }).bgStrokeDisabled).toBe(true);
+  });
+
   it('applies settings over the defaults', () => {
     const out = resolveSettings({ bgFill: 'var(--color-purple-light-5, #9e8ef5)', highSize: 4 });
     expect(out.bgFill).toBe('var(--color-purple-light-5, #9e8ef5)');

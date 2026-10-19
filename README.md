@@ -15,7 +15,7 @@ The package is private, so install it straight from GitHub. The build runs on
 install.
 
 ```bash
-npm i github:overnice/datocms-pixel-video#v0.3.1
+npm i github:overnice/datocms-pixel-video#v0.3.2
 ```
 
 Installing needs GitHub access to this repository on every machine and build
@@ -26,7 +26,7 @@ below).
 
 The component has no dependencies (React only for the React wrapper), so you
 can copy its files into your project and import them like your own code. Copy
-from a release tag (for example `v0.3.1`), not from `main`, and note the version
+from a release tag (for example `v0.3.2`), not from `main`, and note the version
 you copied.
 
 ### Option A: the source files (TypeScript projects)
@@ -67,7 +67,7 @@ else in the usage guide below applies unchanged.
 Build the release once and copy the single file it produces:
 
 ```bash
-git clone --branch v0.3.1 https://github.com/overnice/datocms-pixel-video.git
+git clone --branch v0.3.2 https://github.com/overnice/datocms-pixel-video.git
 cd datocms-pixel-video && npm install && npm run build
 # copy dist/pixel-video.global.js into your site, e.g. public/js/
 ```
@@ -252,6 +252,7 @@ Settings, with their defaults in `src/settings.ts`:
   `tHigh` (midtones below it, highlights above), as brightness 0–255.
 - **Each layer:** `{bg,mid,high}` + `Size`, `Fill`, `Stroke`.
 - **Strokes:** `strokeWeight`, the same for every layer and the lens.
+  `bgStrokeDisabled: true` draws the background layer without strokes.
 - **Hover lens:** `hover`, `hoverRadius`, `hoverDistortion`, `hoverSpeed`,
   `hoverPixelSize`, `hoverFalloff`.
 

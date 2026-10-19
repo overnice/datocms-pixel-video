@@ -20,6 +20,8 @@ export interface PixelVideoSettings {
   bgSize: number;
   bgFill: string;
   bgStroke: string;
+  /** Draw the background layer's squares without strokes. */
+  bgStrokeDisabled: boolean;
 
   midSize: number;
   midFill: string;
@@ -55,6 +57,7 @@ export const DEFAULTS: Readonly<PixelVideoSettings> = Object.freeze({
   bgSize: 8,
   bgFill: BROWN,
   bgStroke: BROWN,
+  bgStrokeDisabled: false,
 
   midSize: 10,
   midFill: ORANGE,
@@ -95,7 +98,7 @@ export function resolveSettings(settings?: Partial<PixelVideoSettings> | null): 
       warn(`ignoring "${key}": expected a ${expected}, got ${JSON.stringify(value)}`);
       continue;
     }
-    if (/(Fill|Stroke)$/.test(key) && !COLOR.test(value as string)) {
+    if (expected === 'string' && !COLOR.test(value as string)) {
       warn(`ignoring "${key}": ${JSON.stringify(value)} is not a hex colour or var(--token, #hex)`);
       continue;
     }
