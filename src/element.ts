@@ -316,11 +316,6 @@ export class PixelVideoElement extends Base {
 
   // ── internals ─────────────────────────────────────────────────────────────
 
-  #reflect(name: string, value: string | null) {
-    if (value === null) this.removeAttribute(name);
-    else this.setAttribute(name, value);
-  }
-
   #applySettings() {
     let settings = this.#settings;
     const json = this.getAttribute('settings');
