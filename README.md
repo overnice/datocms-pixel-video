@@ -54,6 +54,75 @@ server.
 If there's no bundler, load the single file `dist/pixel-video.global.js` with a
 plain `<script>` tag.
 
+### Astro
+
+Use the custom element directly. It needs no integration and only adds a small
+client script:
+
+```astro
+---
+// src/components/PixelHero.astro
+const settings = { highFill: '#e3d55a', hoverRadius: 200 }; // or a lab snippet's object
+---
+
+<pixel-video
+  src="/videos/hero.mp4"
+  poster="/videos/hero.jpg"
+  settings={JSON.stringify(settings)}
+></pixel-video>
+
+<script>
+  import '@overnice/datocms-pixel-video/register';
+</script>
+```
+
+- **The `<script>` defines the element.** Astro bundles it and includes it once
+  per page, however many times the component is used. The element renders
+  nothing until that script runs, so give it a size if it's above the fold (its
+  default 16:9 box holds the space until the video loads).
+- **Pass `settings` with `JSON.stringify`.** Astro writes attributes as strings,
+  so an object has to be serialised. The lab's **Copy HTML snippet** already
+  gives you the JSON. Paste its `<pixel-video>` tag into a `.astro` file as it is.
+- **Several formats:** use `<source>` children, as in plain HTML.
+- **Video files** can go in `public/` (`src="/videos/hero.mp4"`), or you can
+  import them so they get a hashed URL:
+  `import heroMp4 from '../assets/hero.mp4?url';` and then `src={heroMp4}`.
+- **View transitions (`<ClientRouter />`):** nothing extra is needed. The element
+  tears down when it's removed from the page and sets itself up again when it's
+  added.
+
+**From DatoCMS.** Query the video field's MP4 rendition. `streamingUrl` is HLS,
+which a plain `<video>` can't play outside Safari. The effect works at no more
+than 400px, so a low rendition is enough:
+
+```graphql
+heroVideo {
+  video {
+    mp4Url(res: low)
+    thumbnailUrl(width: 800)
+  }
+}
+```
+
+```astro
+<pixel-video
+  src={heroVideo.video.mp4Url}
+  poster={heroVideo.video.thumbnailUrl}
+  settings={JSON.stringify(settings)}
+></pixel-video>
+```
+
+`mp4Url` is `null` unless MP4 renditions are turned on for the DatoCMS project,
+so check for that. If the file is served from a CDN, it also needs CORS headers
+(see below).
+
+**As a React island.** If the site already uses `@astrojs/react` and you want
+the `<PixelVideo>` props, render the wrapper with a client directive, for
+example `<PixelVideo client:visible src="/videos/hero.mp4" settings={settings} />`.
+With `client:visible`, React loads only when the video scrolls into view. The
+custom element is lighter (no React on the page), so prefer it unless you need
+React state around the video.
+
 ## Tuning the look in the lab
 
 Tune the look in the Overnice lab prototype ("Pixel video"), not by hand:
