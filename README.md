@@ -18,6 +18,73 @@ install.
 npm i github:overnice/datocms-pixel-video#v0.3.0
 ```
 
+Installing needs GitHub access to this repository on every machine and build
+server. If that's a problem, copy the component into your codebase instead (see
+below).
+
+## Copying it into your codebase (no install)
+
+The component has no dependencies (React only for the React wrapper), so you
+can copy its files into your project and import them like your own code. Copy
+from a release tag (for example `v0.3.0`), not from `main`, and note the version
+you copied.
+
+### Option A: the source files (TypeScript projects)
+
+Copy these files from `src/` into one folder in your project, for example
+`src/components/pixel-video/`. Keep the file names: they import each other.
+
+| File          | Needed                       | What it is                                      |
+| ------------- | ---------------------------- | ----------------------------------------------- |
+| `settings.ts` | Always                       | The settings type, defaults and validation      |
+| `core.ts`     | Always                       | The WebGL effect                                |
+| `element.ts`  | Always                       | The `<pixel-video>` custom element              |
+| `register.ts` | For plain HTML / Astro / Vue | Importing it defines `<pixel-video>`            |
+| `react.tsx`   | For React / Next.js          | The `<PixelVideo>` wrapper (a client component) |
+| `index.ts`    | Optional                     | Re-exports everything from one import           |
+
+Then import from that folder instead of the package name:
+
+```tsx
+// React / Next.js
+import { PixelVideo } from '@/components/pixel-video/react';
+```
+
+```astro
+<!-- Astro (or any page with a bundler) -->
+<pixel-video src="/videos/hero.mp4"></pixel-video>
+<script>
+  import '../components/pixel-video/register';
+</script>
+```
+
+Requirements: a bundler that compiles TypeScript (Vite, Next.js, Astro and
+webpack setups do), and for the React wrapper React 18 or newer. Everything
+else in the usage guide below applies unchanged.
+
+### Option B: one built file (no bundler, no TypeScript)
+
+Build the release once and copy the single file it produces:
+
+```bash
+git clone --branch v0.3.0 https://github.com/overnice/datocms-pixel-video.git
+cd datocms-pixel-video && npm install && npm run build
+# copy dist/pixel-video.global.js into your site, e.g. public/js/
+```
+
+```html
+<script src="/js/pixel-video.global.js"></script>
+<pixel-video src="/videos/hero.mp4"></pixel-video>
+```
+
+That one script defines `<pixel-video>`; the React wrapper isn't included.
+
+### Keeping a copy up to date
+
+A copy doesn't update itself. When a new release comes out, copy the same files
+again from that release and replace yours. Don't edit the copied files: report
+changes back to us instead, or a later update will overwrite them.
+
 ## Use
 
 ### React (and Next.js)
