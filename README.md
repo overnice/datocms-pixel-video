@@ -11,16 +11,15 @@ framework, plus a React wrapper.
 
 ## Install
 
-The package is private, so install it straight from GitHub. The build runs on
-install.
+Install it straight from GitHub (it isn't on the npm registry). The build runs
+on install, and no GitHub account or token is needed: the repository is public.
 
 ```bash
 npm i github:overnice/datocms-pixel-video#v0.3.2
 ```
 
-Installing needs GitHub access to this repository on every machine and build
-server. If that's a problem, copy the component into your codebase instead (see
-below).
+To update, run the same command with the newer release tag. Prefer not to add a
+dependency? Copy the component into your codebase instead (see below).
 
 ## Copying it into your codebase (no install)
 
