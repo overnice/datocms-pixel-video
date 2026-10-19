@@ -9,14 +9,12 @@ const looks: Record<string, Partial<PixelVideoSettings>> = {
   Orange: {},
   Purple: {
     bgFill: 'var(--color-purple-light-5, #9e8ef5)',
-    shadowFill: 'var(--color-purple-deep-5, #1d2229)',
     midFill: 'var(--color-purple-light-5, #9e8ef5)',
     highFill: 'var(--color-purple-light-0, #f6f5ff)',
     highStroke: 'var(--color-purple-light-2, #9e8ef580)',
   },
   Green: {
     bgFill: 'var(--color-green-deep-5, #1a4731)',
-    shadowFill: 'var(--color-green-deep-5, #1a4731)',
     midFill: 'var(--color-green-light-5, #9ad162)',
     highFill: 'var(--color-green-light-0, #f5fff5)',
     highStroke: 'var(--color-green-deep-1, #1a47311f)',

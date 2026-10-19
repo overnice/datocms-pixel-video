@@ -1,8 +1,9 @@
 # datocms-pixel-video
 
-A video or image posterised into four brightness layers (background, shadows,
-midtones and highlights). Each layer is a pixel mosaic with its own pixel size,
-fill and stroke. On hover, an animated lens shows a coarser grid. It renders
+A video or image posterised into three brightness layers (background, midtones
+and highlights). Each layer is a pixel mosaic with its own pixel size, fill
+colour and stroke colour; the stroke weight is shared. On hover, an animated
+lens shows a coarser grid. It renders
 with WebGL2 and has no dependencies.
 
 The package gives you a `<pixel-video>` custom element that works in any site or
@@ -178,8 +179,10 @@ midStroke: 'var(--color-orange-deep-1, #42180f1f)', // see-through steps carry a
 
 Settings, with their defaults in `src/settings.ts`:
 
-- **Source:** `smoothing`, `dither`, and the thresholds `tShadow`, `tMid`, `tHigh`.
-- **Each layer:** `{bg,shadow,mid,high}` + `Size`, `Fill`, `Stroke`, `StrokeWeight`.
+- **Source:** `smoothing`, and the thresholds `tMid` (background below it) and
+  `tHigh` (midtones below it, highlights above), as brightness 0–255.
+- **Each layer:** `{bg,mid,high}` + `Size`, `Fill`, `Stroke`.
+- **Strokes:** `strokeWeight`, the same for every layer and the lens.
 - **Hover lens:** `hover`, `hoverRadius`, `hoverDistortion`, `hoverSpeed`,
   `hoverPixelSize`, `hoverFalloff`.
 
@@ -199,9 +202,7 @@ contain-fitted inside it, with the area around it filled in the background colou
   visible, and it only redraws when something has changed: a new video frame, a
   setting, the size, or the pointer. Paused videos and still images cost nothing
   once drawn. Each frame is shrunk on the GPU (to 400px on its longest side) and
-  sorted into layers in a shader, so nothing is read back to the CPU. The one
-  exception is `dither`, which is sequential and runs on the CPU, so use it on
-  small or short sources.
+  sorted into layers in a shader, so nothing is read back to the CPU.
 - **Many on one page.** Each element uses its own WebGL context, and browsers
   allow about 16 at once. Six or so per page is plenty.
 - **CORS.** The effect reads the source's pixels, so a video or image from

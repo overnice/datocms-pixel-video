@@ -12,11 +12,7 @@
 export interface PixelVideoSettings {
   /** Blur the source before posterising, in px (0–10). No-op in Safari. */
   smoothing: number;
-  /** Floyd–Steinberg dither the source to pure black / white first. */
-  dither: boolean;
   /** Brightness (0–255) below which a pixel is background. */
-  tShadow: number;
-  /** Brightness below which a pixel is a shadow. */
   tMid: number;
   /** Brightness below which a pixel is a midtone (above: highlight). */
   tHigh: number;
@@ -24,22 +20,17 @@ export interface PixelVideoSettings {
   bgSize: number;
   bgFill: string;
   bgStroke: string;
-  bgStrokeWeight: number;
-
-  shadowSize: number;
-  shadowFill: string;
-  shadowStroke: string;
-  shadowStrokeWeight: number;
 
   midSize: number;
   midFill: string;
   midStroke: string;
-  midStrokeWeight: number;
 
   highSize: number;
   highFill: string;
   highStroke: string;
-  highStrokeWeight: number;
+
+  /** Stroke weight of every layer's squares (and the lens), in px. */
+  strokeWeight: number;
 
   /** Show the pointer lens. */
   hover: boolean;
@@ -58,30 +49,22 @@ const YELLOW = 'var(--color-yellow-5, #e7d864)';
 
 export const DEFAULTS: Readonly<PixelVideoSettings> = Object.freeze({
   smoothing: 0,
-  dither: false,
-  tShadow: 34,
   tMid: 105,
   tHigh: 161,
 
-  bgSize: 12,
-  bgFill: ORANGE,
+  bgSize: 8,
+  bgFill: BROWN,
   bgStroke: BROWN,
-  bgStrokeWeight: 0,
-
-  shadowSize: 8,
-  shadowFill: BROWN,
-  shadowStroke: BROWN,
-  shadowStrokeWeight: 1,
 
   midSize: 10,
   midFill: ORANGE,
   midStroke: BROWN,
-  midStrokeWeight: 0,
 
   highSize: 12,
   highFill: YELLOW,
   highStroke: BROWN,
-  highStrokeWeight: 1,
+
+  strokeWeight: 1,
 
   hover: true,
   hoverRadius: 160,

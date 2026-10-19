@@ -18,7 +18,7 @@
 import { mountPixelVideo, type PixelVideoEffect } from './core';
 import { resolveSettings, type PixelVideoSettings } from './settings';
 
-const COLOR_KEYS = (['bg', 'shadow', 'mid', 'high'] as const).flatMap(
+const COLOR_KEYS = (['bg', 'mid', 'high'] as const).flatMap(
   (l) => [`${l}Fill`, `${l}Stroke`] as const,
 );
 const VAR = /^var\(\s*(--[\w-]+)\s*(?:,\s*(.+?)\s*)?\)$/i;

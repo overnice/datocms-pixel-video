@@ -1,4 +1,4 @@
-// The effect: a source (video, image or canvas) posterised into four
+// The effect: a source (video, image or canvas) posterised into three
 // brightness layers, each drawn as its own pixel mosaic, plus a pointer lens.
 // Derived from the Overnice lab prototype (datocms/pixel-video), with the same
 // look. <pixel-video> (element.ts) drives it; use this directly only for a
@@ -6,14 +6,13 @@
 //
 // Per frame:
 //   1. Prepare: draw the source into a small canvas (longest side ≤ 400px,
-//      optional blur) and upload it as a texture. Only when there is something
-//      new: a new video frame, another source, or a changed setting that
-//      affects it. Normally this stays on the GPU. Dithering (Floyd–Steinberg,
-//      inherently sequential) is the exception: it reads the pixels back and
-//      runs on the CPU, uploading a one-byte-per-pixel layer map instead.
-//   2. Draw: a fragment shader sorts each mosaic cell into a layer (background,
-//      shadows, midtones, highlights) by brightness and paints the four
-//      mosaics, each with its own pixel size, fill, stroke and stroke weight.
+//      optional blur) and upload it as a texture, all on the GPU. Only when
+//      there is something new: a new video frame, another source, or a new
+//      smoothing.
+//   2. Draw: a fragment shader sorts each mosaic cell into a layer
+//      (background, midtones, highlights) by brightness, using two
+//      thresholds, and paints the three mosaics, each with its own pixel size,
+//      fill and stroke colour; the stroke weight is shared.
 //      The lens is drawn on top: a coarser grid whose squares shrink to nothing
 //      at an animated, blob-shaped edge. Skipped when nothing changed.
 
@@ -57,64 +56,8 @@ function ready(el: FrameSource) {
   return el.width > 0;
 }
 
-const luma = (r: number, g: number, b: number) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
-
 /** Pixels at or below this alpha (0–255) are never drawn. */
 const MIN_ALPHA = 128;
-/** Layer-map value for those pixels. */
-const SKIP = 255;
-
-// ── stage 1: CPU dithering (only with `dither` on) ───────────────────────────
-
-/** Brightness per pixel, Floyd–Steinberg dithered to pure 0 / 255. Skipped
- *  pixels don't take part (their error isn't spread). */
-function ditherBrightness(px: Uint8ClampedArray, w: number, h: number, lum: Float32Array) {
-  for (let i = 0; i < w * h; i++) lum[i] = luma(px[i * 4], px[i * 4 + 1], px[i * 4 + 2]);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x;
-      if (px[i * 4 + 3] <= MIN_ALPHA) continue;
-      const old = lum[i];
-      const next = old < 128 ? 0 : 255;
-      const err = old - next;
-      lum[i] = next;
-      if (x + 1 < w) lum[i + 1] += (err * 7) / 16;
-      if (y + 1 < h) {
-        if (x > 0) lum[i + w - 1] += (err * 3) / 16;
-        lum[i + w] += (err * 5) / 16;
-        if (x + 1 < w) lum[i + w + 1] += err / 16;
-      }
-    }
-  }
-}
-
-/** Dithered layer map (0–3 per pixel, SKIP for transparent) of the prepared
- *  frame. Buffers are reused between frames. */
-function createDitherer() {
-  let layers = new Uint8Array(0);
-  let lum = new Float32Array(0);
-  return (px: Uint8ClampedArray, w: number, h: number, v: PixelVideoSettings) => {
-    if (layers.length !== w * h) {
-      layers = new Uint8Array(w * h);
-      lum = new Float32Array(w * h);
-    }
-    ditherBrightness(px, w, h, lum);
-    for (let i = 0; i < w * h; i++) {
-      const b = lum[i];
-      layers[i] =
-        px[i * 4 + 3] <= MIN_ALPHA
-          ? SKIP
-          : b < v.tShadow
-            ? 0
-            : b < v.tMid
-              ? 1
-              : b < v.tHigh
-                ? 2
-                : 3;
-    }
-    return layers;
-  };
-}
 
 // ── stage 2: GPU ─────────────────────────────────────────────────────────────
 
@@ -127,18 +70,17 @@ precision highp float;
 precision highp int;
 
 uniform vec2 uRes;            // canvas, device px
-uniform sampler2D uFrame;     // the prepared frame (RGBA), or a layer map (R8)
-uniform bool uLayerMap;       // uFrame is a layer map: layer * (1/255), 255 = skip
+uniform sampler2D uFrame;     // the prepared frame
 uniform ivec2 uFrameSize;
-uniform vec3 uThresholds;     // tShadow, tMid, tHigh (brightness 0–255)
+uniform vec2 uThresholds;     // tMid, tHigh (brightness 0–255)
 uniform bool uHasFrame;
 uniform vec2 uOffset;         // contain-fit rect of the source, device px
 uniform vec2 uDraw;
 
-uniform float uSize[4];       // per layer, device px
-uniform vec4 uFill[4];         // straight (not premultiplied) alpha
-uniform vec4 uStroke[4];
-uniform float uWeight[4];
+uniform float uSize[3];       // per layer, device px
+uniform vec4 uFill[3];        // straight (not premultiplied) alpha
+uniform vec4 uStroke[3];
+uniform float uWeight;        // stroke weight, all layers, device px
 
 uniform bool uHover;
 uniform vec2 uPointer;        // relative to the draw rect, device px
@@ -152,16 +94,11 @@ out vec4 color;
 int bucketAt(vec2 o) {
   if (o.x < 0.0 || o.y < 0.0 || o.x >= uDraw.x || o.y >= uDraw.y) return -1;
   ivec2 t = min(ivec2(floor(o * vec2(uFrameSize) / uDraw)), uFrameSize - 1);
-  vec4 c = texelFetch(uFrame, t, 0);
-  if (uLayerMap) {
-    int b = int(c.r * 255.0 + 0.5);
-    return b > 3 ? -1 : b;
-  }
-  // The same 8-bit maths as the CPU path, so both look identical.
-  ivec4 px = ivec4(c * 255.0 + 0.5);
+  // Brightness on the 8-bit values (0–255), like the lab's original effect.
+  ivec4 px = ivec4(texelFetch(uFrame, t, 0) * 255.0 + 0.5);
   if (px.a <= ${MIN_ALPHA}) return -1;
   float b = 0.2126 * float(px.r) + 0.7152 * float(px.g) + 0.0722 * float(px.b);
-  return b < uThresholds.x ? 0 : b < uThresholds.y ? 1 : b < uThresholds.z ? 2 : 3;
+  return b < uThresholds.x ? 0 : b < uThresholds.y ? 1 : 2;
 }
 
 // Paint src (straight alpha) over dst (premultiplied), like stacked layers in
@@ -183,11 +120,11 @@ void main() {
   // Base mosaics, in fixed order — later layers paint over earlier ones.
   // A stroke straddles the square's edge like a canvas strokeRect: half inside
   // the square, half spilling into the neighbouring cell.
-  for (int L = 0; L < 4; L++) {
+  for (int L = 0; L < 3; L++) {
     float ps = uSize[L];
     vec2 cell = floor(local / ps);
     vec2 f = local - cell * ps;
-    float hw = uWeight[L] * 0.5;
+    float hw = uWeight * 0.5;
     bool edge = hw > 0.0 && (min(f.x, f.y) < hw || max(f.x, f.y) >= ps - hw);
     if (bucketAt(cell * ps) == L) {
       // The background layer's fill is already the ground; painting it again
@@ -223,7 +160,7 @@ void main() {
       int b = s > 0.0 ? bucketAt(cell * hs) : -1;
       if (b >= 0) {
         float half_ = hs * s * 0.5;
-        float hw = uWeight[b] * 0.5;
+        float hw = uWeight * 0.5;
         vec2 q = abs(local - center);
         float m = max(q.x, q.y);
         if (m < half_ + hw) col = over(col, (hw > 0.0 && m >= half_ - hw) ? uStroke[b] : uFill[b]);
@@ -234,7 +171,7 @@ void main() {
   color = col; // premultiplied, as the canvas expects
 }`;
 
-const LAYERS = ['bg', 'shadow', 'mid', 'high'] as const;
+const LAYERS = ['bg', 'mid', 'high'] as const;
 
 type RGBA = [number, number, number, number];
 const colorCache = new Map<string, RGBA>();
@@ -334,21 +271,14 @@ export function mountPixelVideo(
   };
 
   // ── stage 1: prepare the frame ───────────────────────────────────────────
-  // Two scratch canvases: reading pixels back (dither) needs a CPU-backed one
-  // (willReadFrequently), which would slow down the GPU path if shared.
-  const scratch = (readBack: boolean) => {
-    const c = document.createElement('canvas');
-    return { canvas: c, ctx: c.getContext('2d', { willReadFrequently: readBack })! };
-  };
-  let gpuScratch: ReturnType<typeof scratch> | null = null;
-  let cpuScratch: ReturnType<typeof scratch> | null = null;
-  const dither = createDitherer();
+  const scratch = document.createElement('canvas');
+  const scratchCtx = scratch.getContext('2d')!;
 
   let source: FrameSource | null = null;
   let sourceId = 0;
   let canvasReads = 0;
   let prepared = ''; // what the texture holds; '' = nothing
-  let texShape = ''; // format + size of the allocated texture
+  let texShape = ''; // size of the allocated texture
   let frameW = 0; // prepared frame, px
   let frameH = 0;
   let preparedFor = -1; // sourceId the texture holds a frame of
@@ -368,34 +298,28 @@ export function mountPixelVideo(
         : el instanceof HTMLImageElement
           ? el.currentSrc
           : ++canvasReads;
-    const key = `${sourceId}|${frame}|${sw}x${sh}|${v.smoothing}|${v.dither && `${v.tShadow},${v.tMid},${v.tHigh}`}`;
+    const key = `${sourceId}|${frame}|${sw}x${sh}|${v.smoothing}`;
     if (key === prepared) return false;
 
     const scale = Math.min(1, MAX_SIDE / Math.max(sw, sh));
     const w = Math.max(1, Math.round(sw * scale));
     const h = Math.max(1, Math.round(sh * scale));
-    const s = v.dither ? (cpuScratch ??= scratch(true)) : (gpuScratch ??= scratch(false));
-    if (s.canvas.width !== w || s.canvas.height !== h) {
-      s.canvas.width = w;
-      s.canvas.height = h;
+    if (scratch.width !== w || scratch.height !== h) {
+      scratch.width = w;
+      scratch.height = h;
     } else {
-      s.ctx.clearRect(0, 0, w, h);
+      scratchCtx.clearRect(0, 0, w, h);
     }
     // `ctx.filter` is unsupported in Safari: smoothing is a no-op there.
-    s.ctx.filter = v.smoothing > 0 ? `blur(${v.smoothing}px)` : 'none';
-    s.ctx.drawImage(el, 0, 0, w, h);
-    s.ctx.filter = 'none';
+    scratchCtx.filter = v.smoothing > 0 ? `blur(${v.smoothing}px)` : 'none';
+    scratchCtx.drawImage(el, 0, 0, w, h);
+    scratchCtx.filter = 'none';
 
-    const shape = `${v.dither ? 'R8' : 'RGBA8'} ${w}x${h}`;
-    const fresh = shape !== texShape;
-    if (v.dither) {
-      const layers = dither(s.ctx.getImageData(0, 0, w, h).data, w, h, v);
-      if (fresh) gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, layers);
-      else gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RED, gl.UNSIGNED_BYTE, layers);
-    } else if (fresh) {
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, s.canvas);
+    const shape = `${w}x${h}`;
+    if (shape !== texShape) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, scratch);
     } else {
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, s.canvas);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, scratch);
     }
     texShape = shape;
     prepared = key;
@@ -478,10 +402,9 @@ export function mountPixelVideo(
   resize();
 
   // Per-layer uniform arrays, reused every draw.
-  const size = new Float32Array(4);
-  const fill = new Float32Array(16);
-  const stroke = new Float32Array(16);
-  const weight = new Float32Array(4);
+  const size = new Float32Array(3);
+  const fill = new Float32Array(12);
+  const stroke = new Float32Array(12);
 
   return {
     setSource(el) {
@@ -515,9 +438,8 @@ export function mountPixelVideo(
       const hasFrame = !!source && preparedFor === sourceId;
       gl.uniform1i(u('uHasFrame'), hasFrame ? 1 : 0);
       if (hasFrame) {
-        gl.uniform1i(u('uLayerMap'), v.dither ? 1 : 0);
         gl.uniform2i(u('uFrameSize'), frameW, frameH);
-        gl.uniform3f(u('uThresholds'), v.tShadow, v.tMid, v.tHigh);
+        gl.uniform2f(u('uThresholds'), v.tMid, v.tHigh);
 
         // Contain-fit the source, offsets floored to avoid subpixel seams.
         const s = Math.min(W / sourceW, H / sourceH);
@@ -532,17 +454,15 @@ export function mountPixelVideo(
         if (lens) gl.uniform2f(u('uPointer'), pointer![0] - offX, pointer![1] - offY);
       }
 
-      for (let i = 0; i < 4; i++) {
-        const l = LAYERS[i];
+      LAYERS.forEach((l, i) => {
         size[i] = Math.max(1, v[`${l}Size`] * dpr);
         fill.set(parseColor(v[`${l}Fill`]), i * 4);
         stroke.set(parseColor(v[`${l}Stroke`]), i * 4);
-        weight[i] = v[`${l}StrokeWeight`] * dpr;
-      }
+      });
       gl.uniform1fv(u('uSize'), size);
       gl.uniform4fv(u('uFill'), fill);
       gl.uniform4fv(u('uStroke'), stroke);
-      gl.uniform1fv(u('uWeight'), weight);
+      gl.uniform1f(u('uWeight'), v.strokeWeight * dpr);
 
       gl.uniform1f(u('uTime'), time * v.hoverSpeed);
       gl.uniform1f(u('uRadius'), v.hoverRadius * dpr);

@@ -9,8 +9,8 @@ describe('resolveSettings', () => {
   });
 
   it('defaults to palette tokens with hex fallbacks', () => {
-    expect(DEFAULTS.bgFill).toBe('var(--color-orange-light-5, #ff6d00)');
-    expect(DEFAULTS.shadowFill).toBe('var(--color-brown-5, #351615)');
+    expect(DEFAULTS.bgFill).toBe('var(--color-brown-5, #351615)');
+    expect(DEFAULTS.midFill).toBe('var(--color-orange-light-5, #ff6d00)');
     expect(DEFAULTS.highFill).toBe('var(--color-yellow-5, #e7d864)');
   });
 
@@ -22,8 +22,16 @@ describe('resolveSettings', () => {
   });
 
   it('takes a full lab snippet as-is', () => {
-    const lab = { ...DEFAULTS, highSize: 4, dither: true, midStroke: '#42180f1f' };
+    const lab = { ...DEFAULTS, highSize: 4, strokeWeight: 0, midStroke: '#42180f1f' };
     expect(resolveSettings(JSON.parse(JSON.stringify(lab)))).toEqual(lab);
+  });
+
+  it('ignores settings that no longer exist (shadow layer, dither, per-layer stroke weights)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(
+      resolveSettings({ shadowFill: '#000', dither: true, bgStrokeWeight: 3 } as never),
+    ).toEqual(DEFAULTS);
+    warn.mockRestore();
   });
 
   it('drops unknown keys, wrong types and non-colours with a warning', () => {
