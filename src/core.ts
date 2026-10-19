@@ -40,6 +40,9 @@ export interface MountOptions {
   /** Called when something outside a render (resize, pointer, a restored
    *  WebGL context) needs a new frame: schedule a render. */
   onInvalidate?: () => void;
+  /** Keep the last frame readable (e.g. `drawImage(canvas)` for screenshots).
+   *  Off by default: it costs a little GPU memory and speed. */
+  preserveDrawingBuffer?: boolean;
 }
 
 const MAX_SIDE = 400;
@@ -211,10 +214,10 @@ export function parseColor(css: string): RGBA {
 export function mountPixelVideo(
   canvas: HTMLCanvasElement,
   settings: PixelVideoSettings,
-  { onInvalidate }: MountOptions = {},
+  { onInvalidate, preserveDrawingBuffer = false }: MountOptions = {},
 ): PixelVideoEffect {
   // Alpha: a see-through background colour shows the page behind.
-  const gl = canvas.getContext('webgl2', { antialias: false, depth: false });
+  const gl = canvas.getContext('webgl2', { antialias: false, depth: false, preserveDrawingBuffer });
   if (!gl) throw new Error('WebGL2 unavailable');
 
   // ── GL resources (re-created if the context is lost and restored) ────────

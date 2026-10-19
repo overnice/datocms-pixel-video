@@ -259,6 +259,7 @@ export class PixelVideoElement extends Base {
     try {
       this.#effect = mountPixelVideo(this.#canvas, this.#draw, {
         onInvalidate: this.#requestFrame,
+        preserveDrawingBuffer: this.hasAttribute('preserve-drawing-buffer'),
       });
     } catch (error) {
       this.#fail(error);

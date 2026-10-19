@@ -15,7 +15,7 @@ The package is private, so install it straight from GitHub. The build runs on
 install.
 
 ```bash
-npm i github:overnice/datocms-pixel-video#v0.3.0
+npm i github:overnice/datocms-pixel-video#v0.3.1
 ```
 
 Installing needs GitHub access to this repository on every machine and build
@@ -26,7 +26,7 @@ below).
 
 The component has no dependencies (React only for the React wrapper), so you
 can copy its files into your project and import them like your own code. Copy
-from a release tag (for example `v0.3.0`), not from `main`, and note the version
+from a release tag (for example `v0.3.1`), not from `main`, and note the version
 you copied.
 
 ### Option A: the source files (TypeScript projects)
@@ -67,7 +67,7 @@ else in the usage guide below applies unchanged.
 Build the release once and copy the single file it produces:
 
 ```bash
-git clone --branch v0.3.0 https://github.com/overnice/datocms-pixel-video.git
+git clone --branch v0.3.1 https://github.com/overnice/datocms-pixel-video.git
 cd datocms-pixel-video && npm install && npm run build
 # copy dist/pixel-video.global.js into your site, e.g. public/js/
 ```
@@ -233,17 +233,18 @@ midStroke: 'var(--color-orange-deep-1, #e8e3e2)', // see-through steps: flattene
 
 ## Props / attributes
 
-| React prop     | HTML attribute            | Notes                                                                                |
-| -------------- | ------------------------- | ------------------------------------------------------------------------------------ |
-| `src`          | `src`                     | URL, or an array of URLs (React/property only); or `<source>` children               |
-| `type`         | `type`                    | `"video"` / `"image"`. By default it's an image if the URL ends in .jpg/.png/.webp/… |
-| `poster`       | `poster`                  | Image drawn, pixelated, until the video has a frame                                  |
-| `settings`     | `settings`                | Any subset of the settings below (JSON string as an attribute)                       |
-| `paused`       | `paused`                  | Pause the video                                                                      |
-| `playbackRate` | `playback-rate`           |                                                                                      |
-| `crossOrigin`  | `crossorigin`             | Default `anonymous` (see CORS below)                                                 |
-| `onLoad`       | `load` event              | The source's size is known                                                           |
-| `onError`      | `pixel-video-error` event | `detail: { message, cause }`. The effect fell back to the plain source               |
+| React prop     | HTML attribute            | Notes                                                                                       |
+| -------------- | ------------------------- | ------------------------------------------------------------------------------------------- |
+| `src`          | `src`                     | URL, or an array of URLs (React/property only); or `<source>` children                      |
+| `type`         | `type`                    | `"video"` / `"image"`. By default it's an image if the URL ends in .jpg/.png/.webp/…        |
+| `poster`       | `poster`                  | Image drawn, pixelated, until the video has a frame                                         |
+| `settings`     | `settings`                | Any subset of the settings below (JSON string as an attribute)                              |
+| `paused`       | `paused`                  | Pause the video                                                                             |
+| `playbackRate` | `playback-rate`           |                                                                                             |
+| `crossOrigin`  | `crossorigin`             | Default `anonymous` (see CORS below)                                                        |
+| —              | `preserve-drawing-buffer` | Keep the last frame readable, for screenshot tools that copy the canvas. Read when attached |
+| `onLoad`       | `load` event              | The source's size is known                                                                  |
+| `onError`      | `pixel-video-error` event | `detail: { message, cause }`. The effect fell back to the plain source                      |
 
 Settings, with their defaults in `src/settings.ts`:
 
