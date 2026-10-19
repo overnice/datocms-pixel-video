@@ -39,59 +39,73 @@ export interface PixelVideoProps extends Omit<HTMLAttributes<HTMLElement>, 'onEr
   onError?: (message: string, cause?: unknown) => void;
 }
 
-export const PixelVideo = forwardRef<PixelVideoElement | null, PixelVideoProps>(
-  function PixelVideo(
-    { src, type, poster, preset, settings, paused, playbackRate, crossOrigin, onLoad, onError, ...rest },
-    forwarded,
-  ) {
-    const ref = useRef<PixelVideoElement>(null);
-    useImperativeHandle(forwarded, () => ref.current!, []);
-
-    const set = <K extends keyof PixelVideoElement>(key: K, value: PixelVideoElement[K]) => {
-      if (ref.current) ref.current[key] = value;
-    };
-    const attr = (name: string, value: string | undefined) => {
-      if (!ref.current) return;
-      if (value === undefined) ref.current.removeAttribute(name);
-      else ref.current.setAttribute(name, value);
-    };
-
-    // Attributes that change how the source loads go first, then the source.
-    useEffect(() => attr('type', type), [type]);
-    useEffect(() => attr('poster', poster), [poster]);
-    useEffect(() => attr('crossorigin', crossOrigin), [crossOrigin]);
-    const srcKey = JSON.stringify(src);
-    useEffect(() => set('src', src), [srcKey]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    useEffect(() => attr('preset', preset), [preset]);
-    // Compared by value, so an inline object literal doesn't re-apply each render.
-    const settingsKey = JSON.stringify(settings ?? null);
-    useEffect(() => set('settings', settings ?? null), [settingsKey]); // eslint-disable-line react-hooks/exhaustive-deps
-    useEffect(() => set('paused', !!paused), [paused]);
-    useEffect(() => attr('playback-rate', playbackRate?.toString()), [playbackRate]);
-
-    const handlers = useRef({ onLoad, onError });
-    handlers.current = { onLoad, onError };
-    useEffect(() => {
-      const node = ref.current!;
-      const load = () => handlers.current.onLoad?.();
-      const error = (e: Event) => {
-        const { message, cause } = (e as CustomEvent<{ message: string; cause?: unknown }>).detail;
-        handlers.current.onError?.(message, cause);
-      };
-      // Reported before this effect could listen (e.g. no WebGL2 on mount).
-      if (node.error) handlers.current.onError?.(node.error.message, node.error.cause);
-      node.addEventListener('load', load);
-      node.addEventListener('pixel-video-error', error);
-      return () => {
-        node.removeEventListener('load', load);
-        node.removeEventListener('pixel-video-error', error);
-      };
-    }, []);
-
-    return createElement(TAG, { ...rest, ref });
+export const PixelVideo = forwardRef<PixelVideoElement | null, PixelVideoProps>(function PixelVideo(
+  {
+    src,
+    type,
+    poster,
+    preset,
+    settings,
+    paused,
+    playbackRate,
+    crossOrigin,
+    onLoad,
+    onError,
+    ...rest
   },
-);
+  forwarded,
+) {
+  const ref = useRef<PixelVideoElement>(null);
+  useImperativeHandle(forwarded, () => ref.current!, []);
+
+  const set = <K extends keyof PixelVideoElement>(key: K, value: PixelVideoElement[K]) => {
+    if (ref.current) ref.current[key] = value;
+  };
+  const attr = (name: string, value: string | undefined) => {
+    if (!ref.current) return;
+    if (value === undefined) ref.current.removeAttribute(name);
+    else ref.current.setAttribute(name, value);
+  };
+
+  // The element batches these into one source load.
+  useEffect(() => attr('type', type), [type]);
+  useEffect(() => attr('poster', poster), [poster]);
+  useEffect(() => attr('crossorigin', crossOrigin), [crossOrigin]);
+  // `src` and `settings` are compared by value (keyed on their JSON), so an
+  // inline array or object literal doesn't re-apply on every render.
+  const srcKey = JSON.stringify(src);
+  useEffect(() => set('src', src), [srcKey]);
+
+  useEffect(() => attr('preset', preset), [preset]);
+  const settingsKey = JSON.stringify(settings ?? null);
+  useEffect(() => set('settings', settings ?? null), [settingsKey]);
+  useEffect(() => set('paused', !!paused), [paused]);
+  useEffect(() => attr('playback-rate', playbackRate?.toString()), [playbackRate]);
+
+  // The latest callbacks, without re-subscribing when they change identity.
+  const handlers = useRef({ onLoad, onError });
+  useEffect(() => {
+    handlers.current = { onLoad, onError };
+  });
+  useEffect(() => {
+    const node = ref.current!;
+    const load = () => handlers.current.onLoad?.();
+    const error = (e: Event) => {
+      const { message, cause } = (e as CustomEvent<{ message: string; cause?: unknown }>).detail;
+      handlers.current.onError?.(message, cause);
+    };
+    // Reported before this effect could listen (e.g. no WebGL2 on mount).
+    if (node.error) handlers.current.onError?.(node.error.message, node.error.cause);
+    node.addEventListener('load', load);
+    node.addEventListener('pixel-video-error', error);
+    return () => {
+      node.removeEventListener('load', load);
+      node.removeEventListener('pixel-video-error', error);
+    };
+  }, []);
+
+  return createElement(TAG, { ...rest, ref });
+});
 
 export type { PixelVideoElement, PixelVideoSettings, PresetName };
 export { DEFAULTS, PRESETS } from './settings';

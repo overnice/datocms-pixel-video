@@ -3,4 +3,4 @@ import { definePixelVideo } from './element';
 
 definePixelVideo();
 
-export * from './index';
+export { PixelVideoElement, definePixelVideo } from './element';

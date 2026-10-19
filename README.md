@@ -14,7 +14,7 @@ The package is private, so install it straight from GitHub. The build runs on
 install.
 
 ```bash
-npm i github:overnice/datocms-pixel-video#v0.1.0
+npm i github:overnice/datocms-pixel-video#v0.2.0
 ```
 
 ## Use
@@ -25,11 +25,11 @@ npm i github:overnice/datocms-pixel-video#v0.1.0
 import { PixelVideo } from '@overnice/datocms-pixel-video/react';
 
 <PixelVideo
-  src={['/hero.webm', '/hero.mp4']}  // or one URL; an image URL works too
-  poster="/hero.jpg"                 // optional: drawn while the video loads
+  src={['/hero.webm', '/hero.mp4']} // or one URL; an image URL works too
+  poster="/hero.jpg" // optional: drawn while the video loads
   settings={{ highFill: '#e3d55a', hoverRadius: 200 }}
   className="hero-video"
-/>
+/>;
 ```
 
 The wrapper is a client component (`'use client'`) and is safe to render on the
@@ -145,12 +145,12 @@ break the component.
 | -------------- | ------------------------- | ------------------------------------------------------------------------------------ |
 | `src`          | `src`                     | URL, or an array of URLs (React/property only); or `<source>` children               |
 | `type`         | `type`                    | `"video"` / `"image"`. By default it's an image if the URL ends in .jpg/.png/.webp/… |
-| `poster`       | `poster`                  | Image drawn, pixelated, until the video has a frame                                   |
-| `preset`       | `preset`                  | `"Fine highlights"`, `"Dithered"`, `"Mono"`. Applied before `settings`                 |
-| `settings`     | `settings`                | Any subset of the settings below (JSON string as an attribute)                        |
-| `paused`       | `paused`                  | Pause the video                                                                       |
+| `poster`       | `poster`                  | Image drawn, pixelated, until the video has a frame                                  |
+| `preset`       | `preset`                  | `"Fine highlights"`, `"Dithered"`, `"Mono"`. Applied before `settings`               |
+| `settings`     | `settings`                | Any subset of the settings below (JSON string as an attribute)                       |
+| `paused`       | `paused`                  | Pause the video                                                                      |
 | `playbackRate` | `playback-rate`           |                                                                                      |
-| `crossOrigin`  | `crossorigin`             | Default `anonymous` (see CORS below)                                                  |
+| `crossOrigin`  | `crossorigin`             | Default `anonymous` (see CORS below)                                                 |
 | `onLoad`       | `load` event              | The source's size is known                                                           |
 | `onError`      | `pixel-video-error` event | `detail: { message, cause }`. The effect fell back to the plain source               |
 
@@ -170,19 +170,53 @@ contain-fitted inside it, with the area around it filled in the background colou
 
 ## Behaviour worth knowing
 
-- **CORS.** The effect reads every frame's pixels, so a video or image from
+- **Lazy loading.** The source starts loading when the element comes within
+  about a screen's height of the viewport, much like `loading="lazy"`. Elements
+  already on screen load straight away.
+- **Performance.** It only plays and draws while it's on screen and the tab is
+  visible, and it only redraws when something has changed: a new video frame, a
+  setting, the size, or the pointer. Paused videos and still images cost nothing
+  once drawn. Each frame is shrunk on the GPU (to 400px on its longest side) and
+  sorted into layers in a shader, so nothing is read back to the CPU. The one
+  exception is `dither`, which is sequential and runs on the CPU, so use it on
+  small or short sources.
+- **Many on one page.** Each element uses its own WebGL context, and browsers
+  allow about 16 at once. Six or so per page is plenty.
+- **CORS.** The effect reads the source's pixels, so a video or image from
   another domain needs `Access-Control-Allow-Origin` headers. Check this if the
   files are on a CDN. Without the headers, the element shows the plain source and
   reports an error (`onError`) instead of breaking.
-- **No WebGL2.** In this case it shows the plain source the same way.
-- **Performance.** The effect only renders and plays while it's on screen and
-  the tab is visible. Each frame is processed at no more than 400px on its
-  longest side, so short, small sources are cheapest.
+- **No WebGL2.** In this case it shows the plain source the same way. If the GPU
+  resets (it happens on mobile), the effect restores itself.
 - **Reduced motion.** When `prefers-reduced-motion` is set, the video stays on
-  its first frame. Hover still works.
+  its first frame and the lens edge doesn't wobble. The lens still follows the
+  pointer.
+- **Accessibility.** The element is decorative by default: screen readers skip
+  it. If the picture carries meaning, label the element:
+  `<pixel-video role="img" aria-label="…">`.
 - **Touch.** There's no hover on touch screens, so the lens shows only while a
   finger is down. Scrolling over the element still works.
 - **Autoplay.** Videos are always muted and inline, which is what autoplay needs.
+  The hidden video has picture-in-picture and casting turned off.
+
+## Custom render loop
+
+`<pixel-video>` covers normal use. For something else, such as drawing into
+your own canvas from your own source, use the effect directly:
+
+```ts
+import { mountPixelVideo, resolveSettings } from '@overnice/datocms-pixel-video';
+
+const settings = resolveSettings({ highFill: '#e3d55a' });
+const effect = mountPixelVideo(canvas, settings, { onInvalidate: () => requestDraw() });
+effect.setSource(videoElement);
+// Each animation frame: draws only if something changed; returns whether it did.
+effect.render(performance.now() / 1000);
+// After changing `settings` in place:
+effect.invalidate();
+// When done:
+effect.destroy();
+```
 
 ## Develop
 
@@ -191,10 +225,13 @@ npm install
 npm run dev      # demo/ — web component page + React page (/react.html)
 npm run check    # TypeScript
 npm test         # unit tests
+npm run format   # Prettier
 npm run build    # dist/
 ```
 
-`src/core.ts` is the effect, taken unchanged from the lab prototype.
+`src/core.ts` is the effect. It gives the same image as the lab prototype,
+pixel for pixel, but does the work on the GPU and only when needed.
 `src/element.ts` wraps it as the custom element, and `src/react.tsx` wraps the
-element for React. To release, bump `version`, tag it `vX.Y.Z` and push the tag.
+element for React. CI runs the formatting check, types, tests and build on every
+push. To release, bump `version`, then publish a GitHub release tagged `vX.Y.Z`.
 Consumers pin to that tag.

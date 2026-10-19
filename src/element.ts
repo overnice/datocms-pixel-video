@@ -1,8 +1,9 @@
-// <pixel-video>: the effect as a drop-in custom element. It owns everything
-// the lab page did around the effect: the hidden source <video>/<img>, the
-// render loop, sizing to the source's aspect ratio. On top of that it only
-// runs while on screen, honours prefers-reduced-motion, and falls back to the
-// plain video/image if WebGL2 is missing or the source can't be read (CORS).
+// <pixel-video>: the effect as a drop-in custom element. It owns the hidden
+// source <video>/<img>, the render loop and sizing to the source's aspect
+// ratio. It loads its source only once near the viewport, plays and draws only
+// while on screen (and only when something changed), honours
+// prefers-reduced-motion, and falls back to the plain video/image if WebGL2 is
+// missing or the source can't be read (CORS).
 //
 //   <pixel-video src="/hero.mp4" poster="/hero.jpg" preset="Mono"></pixel-video>
 //
@@ -12,10 +13,9 @@
 // `settings` takes an object. Several sources can also be given as light-DOM
 // <source> children, like a <video>.
 
-import { mountPixelVideo } from './core';
+import { mountPixelVideo, type PixelVideoEffect } from './core';
 import { resolveSettings, type PixelVideoSettings } from './settings';
 
-type Effect = ReturnType<typeof mountPixelVideo>;
 type Media = HTMLVideoElement | HTMLImageElement;
 
 export const TAG = 'pixel-video';
@@ -55,6 +55,47 @@ const STYLE = `
 canvas { display: block; width: 100%; height: 100%; }
 `;
 
+// One stylesheet shared by every instance (where constructable stylesheets
+// are supported), instead of a <style> parsed per element.
+let sheet: CSSStyleSheet | null | undefined;
+function adoptStyles(root: ShadowRoot) {
+  if (sheet === undefined) {
+    try {
+      sheet = new CSSStyleSheet();
+      sheet.replaceSync(STYLE);
+    } catch {
+      sheet = null;
+    }
+  }
+  if (sheet) root.adoptedStyleSheets = [sheet];
+  else root.innerHTML = `<style>${STYLE}</style>`;
+}
+
+// Two observers shared by every instance: "near" (within a screen of the
+// viewport) starts loading the source; "visible" plays and draws it.
+type Watcher = (entry: IntersectionObserverEntry) => void;
+const watchers = new WeakMap<Element, { near: Watcher; visible: Watcher }>();
+let observers: { near: IntersectionObserver; visible: IntersectionObserver } | null = null;
+function observe(el: Element, near: Watcher, visible: Watcher) {
+  observers ??= {
+    near: new IntersectionObserver(
+      (entries) => entries.forEach((e) => watchers.get(e.target)?.near(e)),
+      { rootMargin: '100% 0px' },
+    ),
+    visible: new IntersectionObserver((entries) =>
+      entries.forEach((e) => watchers.get(e.target)?.visible(e)),
+    ),
+  };
+  watchers.set(el, { near, visible });
+  observers.near.observe(el);
+  observers.visible.observe(el);
+}
+function unobserve(el: Element) {
+  watchers.delete(el);
+  observers?.near.unobserve(el);
+  observers?.visible.unobserve(el);
+}
+
 // SSR-safe: importing this module on the server must not touch the DOM.
 const Base = (typeof HTMLElement === 'undefined' ? class {} : HTMLElement) as typeof HTMLElement;
 
@@ -70,27 +111,34 @@ export class PixelVideoElement extends Base {
     'crossorigin',
   ];
 
-  /** Live settings, read by the effect every frame (mutated in place). */
+  /** The resolved settings the effect draws with. Set `settings` to change
+   *  them; mutating this object directly needs a redraw to show. */
   readonly values: PixelVideoSettings = resolveSettings();
 
   #src: string | string[] | null = null;
   #settings: Partial<PixelVideoSettings> | null = null;
   #canvas!: HTMLCanvasElement;
-  #effect: Effect | null = null;
+  #effect: PixelVideoEffect | null = null;
   #media: Media | null = null;
   #poster: HTMLImageElement | null = null;
   #failed = false;
   #lastError: { message: string; cause?: unknown } | null = null;
   #raf = 0;
+  #near = false;
   #onScreen = false;
-  #io: IntersectionObserver | null = null;
+  #loadQueued = false;
   #reducedMotion: MediaQueryList | null = null;
 
   constructor() {
     super();
     const root = this.attachShadow({ mode: 'open' });
-    root.innerHTML = `<style>${STYLE}</style><canvas part="canvas"></canvas>`;
-    this.#canvas = root.querySelector('canvas')!;
+    adoptStyles(root);
+    this.#canvas = document.createElement('canvas');
+    this.#canvas.part.add('canvas');
+    // Decorative by default. For meaningful content, label the element itself
+    // (role="img" aria-label="…").
+    this.#canvas.setAttribute('aria-hidden', 'true');
+    root.append(this.#canvas);
   }
 
   // ── properties ────────────────────────────────────────────────────────────
@@ -102,7 +150,7 @@ export class PixelVideoElement extends Base {
   set src(value: string | string[] | null) {
     const same = JSON.stringify(value) === JSON.stringify(this.#src);
     this.#src = value;
-    if (!same) this.#load();
+    if (!same) this.#queueLoad();
   }
 
   /** Partial settings (e.g. the lab's "Copy values (JSON)"). Overrides the
@@ -162,28 +210,38 @@ export class PixelVideoElement extends Base {
 
     this.#applySettings();
     try {
-      this.#effect = mountPixelVideo(this.#canvas, this.values);
+      this.#effect = mountPixelVideo(this.#canvas, this.values, {
+        onInvalidate: this.#requestFrame,
+      });
     } catch (error) {
       this.#fail(error);
     }
-    this.#load();
 
     this.#reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
     this.#reducedMotion.addEventListener('change', this.#update);
     document.addEventListener('visibilitychange', this.#update);
-    this.#io = new IntersectionObserver(([entry]) => {
-      this.#onScreen = entry.isIntersecting;
-      this.#update();
-    });
-    this.#io.observe(this);
+    observe(
+      this,
+      (entry) => {
+        // Load once it comes near; keep what's loaded when it moves away.
+        if (!entry.isIntersecting || this.#near) return;
+        this.#near = true;
+        this.#queueLoad();
+      },
+      (entry) => {
+        this.#onScreen = entry.isIntersecting;
+        this.#update();
+      },
+    );
   }
 
   disconnectedCallback() {
-    this.#io?.disconnect();
+    unobserve(this);
     this.#reducedMotion?.removeEventListener('change', this.#update);
     document.removeEventListener('visibilitychange', this.#update);
     cancelAnimationFrame(this.#raf);
     this.#raf = 0;
+    this.#near = false;
     this.#onScreen = false;
     this.#effect?.destroy();
     this.#effect = null;
@@ -205,7 +263,7 @@ export class PixelVideoElement extends Base {
         this.#update();
         break;
       default: // src, type, poster, crossorigin
-        if (name !== 'src' || this.#src === null) this.#load();
+        if (name !== 'src' || this.#src === null) this.#queueLoad();
     }
   }
 
@@ -227,6 +285,8 @@ export class PixelVideoElement extends Base {
       }
     }
     Object.assign(this.values, resolveSettings(settings, this.preset));
+    this.#effect?.invalidate();
+    this.#requestFrame();
   }
 
   #sources(): { src: string; type?: string }[] {
@@ -253,8 +313,19 @@ export class PixelVideoElement extends Base {
     this.#media = this.#poster = null;
   }
 
+  /** Several changes in one task (e.g. a framework setting src, type and
+   *  poster one after another) reload the source once. */
+  #queueLoad() {
+    if (this.#loadQueued) return;
+    this.#loadQueued = true;
+    queueMicrotask(() => {
+      this.#loadQueued = false;
+      this.#load();
+    });
+  }
+
   #load() {
-    if (!this.isConnected) return;
+    if (!this.isConnected || !this.#near) return;
     this.#dropMedia();
     const sources = this.#sources();
     const crossOrigin = this.getAttribute('crossorigin') ?? 'anonymous';
@@ -262,8 +333,9 @@ export class PixelVideoElement extends Base {
 
     const poster = this.getAttribute('poster');
     if (poster) {
-      this.#poster = Object.assign(new Image(), { crossOrigin, src: poster });
-      this.#poster.addEventListener('load', () => this.#fit(this.#poster!), { once: true });
+      const img = Object.assign(new Image(), { crossOrigin, src: poster });
+      img.addEventListener('load', () => this.#fit(img), { once: true });
+      this.#poster = img;
     }
 
     if (!sources.length) {
@@ -272,7 +344,12 @@ export class PixelVideoElement extends Base {
     }
 
     let media: Media;
-    if (isImageSource(sources.map((s) => s.src), this.getAttribute('type'))) {
+    if (
+      isImageSource(
+        sources.map((s) => s.src),
+        this.getAttribute('type'),
+      )
+    ) {
       media = Object.assign(new Image(), { crossOrigin, alt: '', src: sources[0].src });
       media.addEventListener('load', () => this.#fit(media));
       media.addEventListener('error', () => this.#error(`couldn't load ${sources[0].src}`));
@@ -287,6 +364,9 @@ export class PixelVideoElement extends Base {
       });
       video.setAttribute('muted', ''); // iOS checks the attribute for autoplay
       video.setAttribute('playsinline', '');
+      // It's a texture, not a player: no picture-in-picture or cast buttons.
+      video.setAttribute('disablepictureinpicture', '');
+      video.setAttribute('disableremoteplayback', '');
       for (const s of sources) {
         const el = Object.assign(document.createElement('source'), { src: s.src });
         const type = s.type ?? videoType(s.src);
@@ -298,9 +378,9 @@ export class PixelVideoElement extends Base {
         this.#error(`couldn't play any of: ${sources.map((s) => s.src).join(', ')}`),
       );
       video.addEventListener('loadedmetadata', () => this.#fit(video));
-      // A paused video only decodes its first frame once it has data; redraw
-      // then (the loop may be idle under reduced motion).
-      video.addEventListener('loadeddata', this.#update);
+      // The loop idles when nothing changes; these bring in new frames.
+      for (const type of ['loadeddata', 'play', 'seeked'])
+        video.addEventListener(type, this.#requestFrame);
       media = video;
     }
     media.setAttribute('aria-hidden', 'true');
@@ -317,7 +397,8 @@ export class PixelVideoElement extends Base {
     // The poster only sizes the box until the real source knows its size.
     if (el === this.#poster && this.#media && this.#mediaReady()) return;
     if (w && h) this.style.setProperty('--pixel-video-aspect', `${w} / ${h}`);
-    this.dispatchEvent(new Event('load'));
+    if (el !== this.#poster) this.dispatchEvent(new Event('load'));
+    this.#requestFrame();
   }
 
   #mediaReady() {
@@ -332,44 +413,54 @@ export class PixelVideoElement extends Base {
     return this.#poster.complete && this.#poster.naturalWidth ? this.#poster : this.#media;
   }
 
+  get #visible() {
+    return this.isConnected && this.#onScreen && !document.hidden;
+  }
+
+  /** The effect can draw (in the fallback the plain source shows instead). */
+  get #live() {
+    return this.#visible && !this.#failed && !!this.#effect;
+  }
+
+  /** Draw on the next animation frame (if on screen). Idempotent. */
+  #requestFrame = () => {
+    if (!this.#raf && this.#live) this.#raf = requestAnimationFrame(this.#tick);
+  };
+
   #tick = (now: number) => {
-    this.#raf = requestAnimationFrame(this.#tick);
+    this.#raf = 0;
+    const effect = this.#effect!;
     try {
-      this.#effect!.setSource(this.#frameSource());
-      this.#effect!.render(now / 1000);
+      effect.setSource(this.#frameSource());
+      // Under reduced motion the lens still follows the pointer but its edge
+      // doesn't wobble.
+      effect.render(this.#reducedMotion?.matches ? 0 : now / 1000);
     } catch (error) {
       // Typically a SecurityError: a cross-origin source without CORS headers
       // can be shown but not read back.
       this.#fail(error);
+      return;
     }
+    // Keep going while there's motion: a playing video or the lens. The effect
+    // only redraws when there's a new video frame, so this costs little.
+    const video = this.#media instanceof HTMLVideoElement ? this.#media : null;
+    if ((video && !video.paused) || effect.hovering) this.#requestFrame();
   };
 
-  /** Start/stop the render loop and the video to match visibility & props. */
+  /** Match the video and the render loop to visibility and the props. */
   #update = () => {
-    const live = this.isConnected && this.#onScreen && !document.hidden;
-    const animate = live && !this.paused && !this.#reducedMotion?.matches;
-
-    const runLoop = live && !this.#failed && !!this.#effect;
-    if (runLoop && !this.#raf) this.#raf = requestAnimationFrame(this.#tick);
-    if (!runLoop && this.#raf) {
+    const animate = this.#visible && !this.paused && !this.#reducedMotion?.matches;
+    const video = this.#media instanceof HTMLVideoElement ? this.#media : null;
+    if (video) {
+      video.playbackRate = this.playbackRate;
+      if (animate && video.paused) void video.play().catch(() => {});
+      if (!animate && !video.paused) video.pause();
+    }
+    if (!this.#live && this.#raf) {
       cancelAnimationFrame(this.#raf);
       this.#raf = 0;
     }
-    // Still draw one frame when static (paused / reduced motion / off-loop).
-    if (!runLoop && this.#effect && !this.#failed && this.isConnected) {
-      try {
-        this.#effect.setSource(this.#frameSource());
-        this.#effect.render(0);
-      } catch (error) {
-        this.#fail(error);
-      }
-    }
-
-    const video = this.#media instanceof HTMLVideoElement ? this.#media : null;
-    if (!video) return;
-    video.playbackRate = this.playbackRate;
-    if (animate && video.paused) void video.play().catch(() => {});
-    if (!animate && !video.paused) video.pause();
+    this.#requestFrame();
   };
 
   #fail(error: unknown) {
@@ -400,7 +491,10 @@ export class PixelVideoElement extends Base {
 /** Register the element (idempotent). Pass a name to use another tag. */
 export function definePixelVideo(name = TAG) {
   if (typeof customElements === 'undefined' || customElements.get(name)) return;
-  customElements.define(name, name === TAG ? PixelVideoElement : class extends PixelVideoElement {});
+  customElements.define(
+    name,
+    name === TAG ? PixelVideoElement : class extends PixelVideoElement {},
+  );
 }
 
 declare global {

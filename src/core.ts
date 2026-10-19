@@ -1,26 +1,49 @@
-// The effect itself, lifted from the Overnice lab prototype (datocms/pixel-video)
-// unchanged apart from the settings type. Feed it settings and a source, then
-// call render(time) once per frame. <pixel-video> (element.ts) does all of
-// that for you; use this directly only for a custom render loop.
+// The effect: a source (video, image or canvas) posterised into four
+// brightness layers, each drawn as its own pixel mosaic, plus a pointer lens.
+// Derived from the Overnice lab prototype (datocms/pixel-video), with the same
+// look. <pixel-video> (element.ts) drives it; use this directly only for a
+// custom render loop.
 //
-// Each frame runs in two stages:
-//   1. CPU: draw the source into an offscreen canvas (longest side ≤ 400px,
-//      optional blur), read it back, optionally Floyd–Steinberg dither it, then
-//      sort every pixel into one of four brightness layers (or "skip" for
-//      transparent pixels). The result is a one-byte-per-pixel bucket map.
-//   2. GPU: a fragment shader draws the four layers (background, shadows,
-//      midtones, highlights) as mosaics with their own pixel size, fill,
-//      stroke and stroke weight. The pointer "lens" is drawn on top: a coarser
-//      grid whose squares shrink to nothing at an animated, blob-shaped edge.
-//      Doing this per pixel on the GPU replaces thousands of fillRect calls.
+// Per frame:
+//   1. Prepare: draw the source into a small canvas (longest side ≤ 400px,
+//      optional blur) and upload it as a texture. Only when there is something
+//      new: a new video frame, another source, or a changed setting that
+//      affects it. Normally this stays on the GPU. Dithering (Floyd–Steinberg,
+//      inherently sequential) is the exception: it reads the pixels back and
+//      runs on the CPU, uploading a one-byte-per-pixel layer map instead.
+//   2. Draw: a fragment shader sorts each mosaic cell into a layer (background,
+//      shadows, midtones, highlights) by brightness and paints the four
+//      mosaics, each with its own pixel size, fill, stroke and stroke weight.
+//      The lens is drawn on top: a coarser grid whose squares shrink to nothing
+//      at an animated, blob-shaped edge. Skipped when nothing changed.
 
 import type { PixelVideoSettings } from './settings';
 
 export type FrameSource = HTMLVideoElement | HTMLCanvasElement | HTMLImageElement;
 
+export interface PixelVideoEffect {
+  /** What to draw. A new source is prepared on the next render. */
+  setSource(el: FrameSource | null): void;
+  /**
+   * Draw a frame if anything changed since the last one (new video frame,
+   * settings, size, pointer) or the lens is animating. `time` in seconds
+   * drives the lens edge. Returns whether it drew.
+   */
+  render(time: number): boolean;
+  /** Force the next render to draw. Call after changing the settings. */
+  invalidate(): void;
+  /** The lens is showing (pointer over the canvas, `hover` on): keep rendering. */
+  readonly hovering: boolean;
+  destroy(): void;
+}
+
+export interface MountOptions {
+  /** Called when something outside a render (resize, pointer, a restored
+   *  WebGL context) needs a new frame: schedule a render. */
+  onInvalidate?: () => void;
+}
+
 const MAX_SIDE = 400;
-/** Bucket value for pixels that are never drawn (alpha ≤ 128). */
-const SKIP = 255;
 
 function sizeOf(el: FrameSource): [number, number] {
   if (el instanceof HTMLVideoElement) return [el.videoWidth, el.videoHeight];
@@ -36,25 +59,21 @@ function ready(el: FrameSource) {
 
 const luma = (r: number, g: number, b: number) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
 
-// ── stage 1: CPU pre-processing ──────────────────────────────────────────────
+/** Pixels at or below this alpha (0–255) are never drawn. */
+const MIN_ALPHA = 128;
+/** Layer-map value for those pixels. */
+const SKIP = 255;
 
-export interface Buckets {
-  width: number;
-  height: number;
-  /** One byte per pixel: 0 background, 1 shadows, 2 midtones, 3 highlights,
-   *  255 skip. */
-  data: Uint8Array;
-}
+// ── stage 1: CPU dithering (only with `dither` on) ───────────────────────────
 
-/** Brightness per pixel, Floyd–Steinberg dithered to pure 0 / 255 on the way.
- *  Pixels with alpha < 128 are left out (their error isn't spread). */
-function ditheredBrightness(px: Uint8ClampedArray, w: number, h: number): Float32Array {
-  const lum = new Float32Array(w * h);
-  for (let i = 0; i < lum.length; i++) lum[i] = luma(px[i * 4], px[i * 4 + 1], px[i * 4 + 2]);
+/** Brightness per pixel, Floyd–Steinberg dithered to pure 0 / 255. Skipped
+ *  pixels don't take part (their error isn't spread). */
+function ditherBrightness(px: Uint8ClampedArray, w: number, h: number, lum: Float32Array) {
+  for (let i = 0; i < w * h; i++) lum[i] = luma(px[i * 4], px[i * 4 + 1], px[i * 4 + 2]);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
-      if (px[i * 4 + 3] < 128) continue;
+      if (px[i * 4 + 3] <= MIN_ALPHA) continue;
       const old = lum[i];
       const next = old < 128 ? 0 : 255;
       const err = old - next;
@@ -67,47 +86,37 @@ function ditheredBrightness(px: Uint8ClampedArray, w: number, h: number): Float3
       }
     }
   }
-  return lum;
 }
 
-export function createProcessor() {
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-  let data = new Uint8Array(0);
-
-  return (source: FrameSource, v: PixelVideoSettings): Buckets | null => {
-    if (!ready(source)) return null;
-    const [sw, sh] = sizeOf(source);
-    if (!sw || !sh) return null;
-    const scale = Math.min(1, MAX_SIDE / Math.max(sw, sh));
-    const w = Math.max(1, Math.round(sw * scale));
-    const h = Math.max(1, Math.round(sh * scale));
-    if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w;
-      canvas.height = h;
+/** Dithered layer map (0–3 per pixel, SKIP for transparent) of the prepared
+ *  frame. Buffers are reused between frames. */
+function createDitherer() {
+  let layers = new Uint8Array(0);
+  let lum = new Float32Array(0);
+  return (px: Uint8ClampedArray, w: number, h: number, v: PixelVideoSettings) => {
+    if (layers.length !== w * h) {
+      layers = new Uint8Array(w * h);
+      lum = new Float32Array(w * h);
     }
-    ctx.clearRect(0, 0, w, h);
-    // `ctx.filter` is unsupported in Safari: smoothing is a no-op there.
-    ctx.filter = v.smoothing > 0 ? `blur(${v.smoothing}px)` : 'none';
-    ctx.drawImage(source, 0, 0, w, h);
-    ctx.filter = 'none';
-    const px = ctx.getImageData(0, 0, w, h).data;
-
-    if (data.length !== w * h) data = new Uint8Array(w * h);
-    const lum = v.dither ? ditheredBrightness(px, w, h) : null;
+    ditherBrightness(px, w, h, lum);
     for (let i = 0; i < w * h; i++) {
-      if (px[i * 4 + 3] <= 128) {
-        data[i] = SKIP;
-        continue;
-      }
-      const b = lum ? lum[i] : luma(px[i * 4], px[i * 4 + 1], px[i * 4 + 2]);
-      data[i] = b < v.tShadow ? 0 : b < v.tMid ? 1 : b < v.tHigh ? 2 : 3;
+      const b = lum[i];
+      layers[i] =
+        px[i * 4 + 3] <= MIN_ALPHA
+          ? SKIP
+          : b < v.tShadow
+            ? 0
+            : b < v.tMid
+              ? 1
+              : b < v.tHigh
+                ? 2
+                : 3;
     }
-    return { width: w, height: h, data };
+    return layers;
   };
 }
 
-// ── stage 2: GPU rendering ───────────────────────────────────────────────────
+// ── stage 2: GPU ─────────────────────────────────────────────────────────────
 
 const VERT = `#version 300 es
 in vec2 p;
@@ -118,8 +127,10 @@ precision highp float;
 precision highp int;
 
 uniform vec2 uRes;            // canvas, device px
-uniform sampler2D uBuckets;   // R8: bucket * (1/255)
-uniform ivec2 uBucketSize;
+uniform sampler2D uFrame;     // the prepared frame (RGBA), or a layer map (R8)
+uniform bool uLayerMap;       // uFrame is a layer map: layer * (1/255), 255 = skip
+uniform ivec2 uFrameSize;
+uniform vec3 uThresholds;     // tShadow, tMid, tHigh (brightness 0–255)
 uniform bool uHasFrame;
 uniform vec2 uOffset;         // contain-fit rect of the source, device px
 uniform vec2 uDraw;
@@ -136,13 +147,21 @@ uniform float uRadius, uDistort, uFalloff, uHoverSize;
 
 out vec4 color;
 
-// Bucket of the grid cell whose top-left corner is at local position o
-// (nearest-neighbour in the processed frame), or -1 outside the draw area.
+// Layer of the grid cell whose top-left corner is at local position o
+// (nearest-neighbour in the prepared frame), or -1 if nothing is drawn there.
 int bucketAt(vec2 o) {
   if (o.x < 0.0 || o.y < 0.0 || o.x >= uDraw.x || o.y >= uDraw.y) return -1;
-  ivec2 t = min(ivec2(floor(o * vec2(uBucketSize) / uDraw)), uBucketSize - 1);
-  int b = int(texelFetch(uBuckets, t, 0).r * 255.0 + 0.5);
-  return b > 3 ? -1 : b;
+  ivec2 t = min(ivec2(floor(o * vec2(uFrameSize) / uDraw)), uFrameSize - 1);
+  vec4 c = texelFetch(uFrame, t, 0);
+  if (uLayerMap) {
+    int b = int(c.r * 255.0 + 0.5);
+    return b > 3 ? -1 : b;
+  }
+  // The same 8-bit maths as the CPU path, so both look identical.
+  ivec4 px = ivec4(c * 255.0 + 0.5);
+  if (px.a <= ${MIN_ALPHA}) return -1;
+  float b = 0.2126 * float(px.r) + 0.7152 * float(px.g) + 0.0722 * float(px.b);
+  return b < uThresholds.x ? 0 : b < uThresholds.y ? 1 : b < uThresholds.z ? 2 : 3;
 }
 
 void main() {
@@ -204,141 +223,292 @@ void main() {
   color = vec4(col, 1.0);
 }`;
 
+const LAYERS = ['bg', 'shadow', 'mid', 'high'] as const;
+
+const rgbCache = new Map<string, [number, number, number]>();
 function rgb(hex: string): [number, number, number] {
-  const h = hex.replace('#', '');
-  const full = h.length === 3 ? [...h].map((c) => c + c).join('') : h.slice(0, 6);
-  const n = parseInt(full, 16);
-  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+  let out = rgbCache.get(hex);
+  if (!out) {
+    const h = hex.replace('#', '');
+    const full = h.length === 3 ? [...h].map((c) => c + c).join('') : h.slice(0, 6);
+    const n = parseInt(full, 16);
+    out = [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+    rgbCache.set(hex, out);
+  }
+  return out;
 }
 
-export function mountPixelVideo(canvas: HTMLCanvasElement, values: PixelVideoSettings) {
-  const gl = canvas.getContext('webgl2');
+export function mountPixelVideo(
+  canvas: HTMLCanvasElement,
+  settings: PixelVideoSettings,
+  { onInvalidate }: MountOptions = {},
+): PixelVideoEffect {
+  const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, depth: false });
   if (!gl) throw new Error('WebGL2 unavailable');
 
-  const compile = (type: number, src: string) => {
-    const s = gl.createShader(type)!;
-    gl.shaderSource(s, src);
-    gl.compileShader(s);
-    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) ?? '');
-    return s;
-  };
-  const program = gl.createProgram()!;
-  gl.attachShader(program, compile(gl.VERTEX_SHADER, VERT));
-  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, FRAG));
-  gl.linkProgram(program);
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS))
-    throw new Error(gl.getProgramInfoLog(program) ?? '');
-  gl.useProgram(program);
-
-  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-  const loc = gl.getAttribLocation(program, 'p');
-  gl.enableVertexAttribArray(loc);
-  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-
+  // ── GL resources (re-created if the context is lost and restored) ────────
+  let program: WebGLProgram;
+  let texture: WebGLTexture;
   const locations = new Map<string, WebGLUniformLocation | null>();
   const u = (name: string) => {
     if (!locations.has(name)) locations.set(name, gl.getUniformLocation(program, name));
     return locations.get(name)!;
   };
 
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.uniform1i(u('uBuckets'), 0);
-  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+  const setup = () => {
+    const compile = (type: number, src: string) => {
+      const s = gl.createShader(type)!;
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+        throw new Error(gl.getShaderInfoLog(s) ?? '');
+      return s;
+    };
+    const vs = compile(gl.VERTEX_SHADER, VERT);
+    const fs = compile(gl.FRAGMENT_SHADER, FRAG);
+    program = gl.createProgram()!;
+    gl.attachShader(program, vs);
+    gl.attachShader(program, fs);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS))
+      throw new Error(gl.getProgramInfoLog(program) ?? '');
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
+    gl.useProgram(program);
+    locations.clear();
 
-  const process = createProcessor();
+    // One triangle covering the viewport.
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(program, 'p');
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+    texture = gl.createTexture()!;
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.uniform1i(u('uFrame'), 0);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    texShape = '';
+    prepared = '';
+    preparedFor = -1;
+  };
+
+  // ── stage 1: prepare the frame ───────────────────────────────────────────
+  // Two scratch canvases: reading pixels back (dither) needs a CPU-backed one
+  // (willReadFrequently), which would slow down the GPU path if shared.
+  const scratch = (readBack: boolean) => {
+    const c = document.createElement('canvas');
+    return { canvas: c, ctx: c.getContext('2d', { willReadFrequently: readBack })! };
+  };
+  let gpuScratch: ReturnType<typeof scratch> | null = null;
+  let cpuScratch: ReturnType<typeof scratch> | null = null;
+  const dither = createDitherer();
+
   let source: FrameSource | null = null;
+  let sourceId = 0;
+  let canvasReads = 0;
+  let prepared = ''; // what the texture holds; '' = nothing
+  let texShape = ''; // format + size of the allocated texture
+  let frameW = 0; // prepared frame, px
+  let frameH = 0;
+  let preparedFor = -1; // sourceId the texture holds a frame of
+  let sourceW = 0; // that source's own size
+  let sourceH = 0;
+
+  /** Upload the source's current frame unless the texture already holds it. */
+  const prepare = (el: FrameSource, v: PixelVideoSettings): boolean => {
+    if (!ready(el)) return false;
+    const [sw, sh] = sizeOf(el);
+    if (!sw || !sh) return false;
+    // A video frame is identified by its playback position, an image by its
+    // URL. A canvas can change without telling, so it is always re-read.
+    const frame =
+      el instanceof HTMLVideoElement
+        ? el.currentTime
+        : el instanceof HTMLImageElement
+          ? el.currentSrc
+          : ++canvasReads;
+    const key = `${sourceId}|${frame}|${sw}x${sh}|${v.smoothing}|${v.dither && `${v.tShadow},${v.tMid},${v.tHigh}`}`;
+    if (key === prepared) return false;
+
+    const scale = Math.min(1, MAX_SIDE / Math.max(sw, sh));
+    const w = Math.max(1, Math.round(sw * scale));
+    const h = Math.max(1, Math.round(sh * scale));
+    const s = v.dither ? (cpuScratch ??= scratch(true)) : (gpuScratch ??= scratch(false));
+    if (s.canvas.width !== w || s.canvas.height !== h) {
+      s.canvas.width = w;
+      s.canvas.height = h;
+    } else {
+      s.ctx.clearRect(0, 0, w, h);
+    }
+    // `ctx.filter` is unsupported in Safari: smoothing is a no-op there.
+    s.ctx.filter = v.smoothing > 0 ? `blur(${v.smoothing}px)` : 'none';
+    s.ctx.drawImage(el, 0, 0, w, h);
+    s.ctx.filter = 'none';
+
+    const shape = `${v.dither ? 'R8' : 'RGBA8'} ${w}x${h}`;
+    const fresh = shape !== texShape;
+    if (v.dither) {
+      const layers = dither(s.ctx.getImageData(0, 0, w, h).data, w, h, v);
+      if (fresh) gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, layers);
+      else gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RED, gl.UNSIGNED_BYTE, layers);
+    } else if (fresh) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, s.canvas);
+    } else {
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, s.canvas);
+    }
+    texShape = shape;
+    prepared = key;
+    frameW = w;
+    frameH = h;
+    preparedFor = sourceId;
+    sourceW = sw;
+    sourceH = sh;
+    return true;
+  };
+
+  // ── size, pointer, context loss ──────────────────────────────────────────
   let dpr = 1;
+  let dirty = true;
+  let lost = false;
+  const invalidate = () => {
+    dirty = true;
+    onInvalidate?.();
+  };
 
   const resize = () => {
     dpr = Math.min(devicePixelRatio, 2);
-    // Even sizes: H.264 can't encode odd frame dimensions (screen recorders).
-    canvas.width = Math.max(2, 2 * Math.round((canvas.clientWidth * dpr) / 2));
-    canvas.height = Math.max(2, 2 * Math.round((canvas.clientHeight * dpr) / 2));
-    gl.viewport(0, 0, canvas.width, canvas.height);
+    const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
+    const h = Math.max(1, Math.round(canvas.clientHeight * dpr));
+    if (canvas.width === w && canvas.height === h) return;
+    canvas.width = w; // clears the canvas
+    canvas.height = h;
+    gl.viewport(0, 0, w, h);
+    invalidate();
   };
   const observer = new ResizeObserver(resize);
   observer.observe(canvas);
-  resize();
+  // Browser zoom / moving to another screen changes the pixel ratio but not
+  // the CSS size, so ResizeObserver alone misses it.
+  let dprQuery: MediaQueryList | null = null;
+  const watchDpr = () => {
+    dprQuery?.removeEventListener('change', onDprChange);
+    dprQuery = matchMedia(`(resolution: ${devicePixelRatio}dppx)`);
+    dprQuery.addEventListener('change', onDprChange);
+  };
+  const onDprChange = () => {
+    resize();
+    watchDpr();
+  };
+  watchDpr();
 
   // Pointer, in device px relative to the canvas; null when outside.
   let pointer: [number, number] | null = null;
   const track = (e: PointerEvent) => {
-    const r = canvas.getBoundingClientRect();
-    pointer = [(e.clientX - r.left) * dpr, (e.clientY - r.top) * dpr];
+    pointer = [e.offsetX * dpr, e.offsetY * dpr];
+    if (settings.hover) invalidate();
   };
-  const leave = () => (pointer = null);
-  canvas.addEventListener('pointermove', track);
-  canvas.addEventListener('pointerenter', track);
-  canvas.addEventListener('pointerdown', track);
-  canvas.addEventListener('pointerleave', leave);
-  canvas.addEventListener('pointercancel', leave);
+  const leave = () => {
+    pointer = null;
+    if (settings.hover) invalidate();
+  };
+  const pointerEvents = {
+    pointermove: track,
+    pointerenter: track,
+    pointerdown: track,
+    pointerleave: leave,
+    pointercancel: leave,
+  };
+  for (const [type, fn] of Object.entries(pointerEvents))
+    canvas.addEventListener(type, fn as EventListener);
 
-  const layers = ['bg', 'shadow', 'mid', 'high'] as const;
+  const onLost = (e: Event) => {
+    e.preventDefault(); // allow the browser to restore it
+    lost = true;
+  };
+  const onRestored = () => {
+    lost = false;
+    setup();
+    invalidate();
+  };
+  canvas.addEventListener('webglcontextlost', onLost);
+  canvas.addEventListener('webglcontextrestored', onRestored);
+
+  setup();
+  resize();
+
+  // Per-layer uniform arrays, reused every draw.
+  const size = new Float32Array(4);
+  const fill = new Float32Array(12);
+  const stroke = new Float32Array(12);
+  const weight = new Float32Array(4);
 
   return {
-    setSource(el: FrameSource | null) {
+    setSource(el) {
+      if (el === source) return;
       source = el;
+      sourceId++;
+      dirty = true;
     },
-    /** `time` in seconds (drives the lens edge animation). */
-    render(time: number) {
-      const v = values;
+
+    get hovering() {
+      return settings.hover && pointer !== null;
+    },
+
+    invalidate() {
+      dirty = true;
+    },
+
+    render(time) {
+      if (lost) return false;
+      const v = settings;
+      const fresh = source ? prepare(source, v) : false;
+      const lens = v.hover && pointer !== null;
+      if (!fresh && !dirty && !lens) return false;
+      dirty = false;
+
       const W = canvas.width;
       const H = canvas.height;
       gl.uniform2f(u('uRes'), W, H);
 
-      const frame = source ? process(source, v) : null;
-      gl.uniform1i(u('uHasFrame'), frame ? 1 : 0);
-      if (frame && source) {
-        gl.texImage2D(
-          gl.TEXTURE_2D,
-          0,
-          gl.R8,
-          frame.width,
-          frame.height,
-          0,
-          gl.RED,
-          gl.UNSIGNED_BYTE,
-          frame.data,
-        );
-        gl.uniform2i(u('uBucketSize'), frame.width, frame.height);
+      // A new source that isn't ready yet draws as empty, not as the old one.
+      const hasFrame = !!source && preparedFor === sourceId;
+      gl.uniform1i(u('uHasFrame'), hasFrame ? 1 : 0);
+      if (hasFrame) {
+        gl.uniform1i(u('uLayerMap'), v.dither ? 1 : 0);
+        gl.uniform2i(u('uFrameSize'), frameW, frameH);
+        gl.uniform3f(u('uThresholds'), v.tShadow, v.tMid, v.tHigh);
 
         // Contain-fit the source, offsets floored to avoid subpixel seams.
-        const [sw, sh] = sizeOf(source);
-        const s = Math.min(W / sw, H / sh);
-        const drawW = sw * s;
-        const drawH = sh * s;
+        const s = Math.min(W / sourceW, H / sourceH);
+        const drawW = sourceW * s;
+        const drawH = sourceH * s;
         const offX = Math.floor((W - drawW) / 2);
         const offY = Math.floor((H - drawH) / 2);
         gl.uniform2f(u('uOffset'), offX, offY);
         gl.uniform2f(u('uDraw'), drawW, drawH);
 
-        const on = v.hover && pointer !== null;
-        gl.uniform1i(u('uHover'), on ? 1 : 0);
-        if (on) gl.uniform2f(u('uPointer'), pointer![0] - offX, pointer![1] - offY);
+        gl.uniform1i(u('uHover'), lens ? 1 : 0);
+        if (lens) gl.uniform2f(u('uPointer'), pointer![0] - offX, pointer![1] - offY);
       }
 
-      gl.uniform1fv(
-        u('uSize'),
-        layers.map((l) => Math.max(1, v[`${l}Size`] * dpr)),
-      );
-      gl.uniform3fv(
-        u('uFill'),
-        layers.flatMap((l) => rgb(v[`${l}Fill`])),
-      );
-      gl.uniform3fv(
-        u('uStroke'),
-        layers.flatMap((l) => rgb(v[`${l}Stroke`])),
-      );
-      gl.uniform1fv(
-        u('uWeight'),
-        layers.map((l) => v[`${l}StrokeWeight`] * dpr),
-      );
+      for (let i = 0; i < 4; i++) {
+        const l = LAYERS[i];
+        size[i] = Math.max(1, v[`${l}Size`] * dpr);
+        fill.set(rgb(v[`${l}Fill`]), i * 3);
+        stroke.set(rgb(v[`${l}Stroke`]), i * 3);
+        weight[i] = v[`${l}StrokeWeight`] * dpr;
+      }
+      gl.uniform1fv(u('uSize'), size);
+      gl.uniform3fv(u('uFill'), fill);
+      gl.uniform3fv(u('uStroke'), stroke);
+      gl.uniform1fv(u('uWeight'), weight);
 
       gl.uniform1f(u('uTime'), time * v.hoverSpeed);
       gl.uniform1f(u('uRadius'), v.hoverRadius * dpr);
@@ -347,15 +517,18 @@ export function mountPixelVideo(canvas: HTMLCanvasElement, values: PixelVideoSet
       gl.uniform1f(u('uHoverSize'), Math.max(1, v.hoverPixelSize * dpr));
 
       gl.drawArrays(gl.TRIANGLES, 0, 3);
+      return true;
     },
+
     destroy() {
       observer.disconnect();
-      canvas.removeEventListener('pointermove', track);
-      canvas.removeEventListener('pointerenter', track);
-      canvas.removeEventListener('pointerdown', track);
-      canvas.removeEventListener('pointerleave', leave);
-      canvas.removeEventListener('pointercancel', leave);
+      dprQuery?.removeEventListener('change', onDprChange);
+      for (const [type, fn] of Object.entries(pointerEvents))
+        canvas.removeEventListener(type, fn as EventListener);
+      canvas.removeEventListener('webglcontextlost', onLost);
+      canvas.removeEventListener('webglcontextrestored', onRestored);
       gl.getExtension('WEBGL_lose_context')?.loseContext();
+      source = null;
     },
   };
 }

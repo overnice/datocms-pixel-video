@@ -1,9 +1,13 @@
 {
   "name": "@overnice/datocms-pixel-video",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Video or image posterised into four pixel-mosaic layers with an organic pointer lens (WebGL2). A <pixel-video> custom element plus a React wrapper.",
   "license": "UNLICENSED",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/overnice/datocms-pixel-video.git"
+  },
   "type": "module",
   "sideEffects": [
     "./dist/register.js",
@@ -35,7 +39,12 @@
     "build": "tsup",
     "check": "tsc --noEmit",
     "test": "vitest run",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "prepare": "tsup"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "peerDependencies": {
     "react": ">=18"
@@ -49,6 +58,7 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "jsdom": "^26.1.0",
+    "prettier": "^3.9.10",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "tsup": "^8.5.0",
