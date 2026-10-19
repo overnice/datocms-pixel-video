@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>pixel-video — web component demo</title>
+    <link rel="stylesheet" href="./demo.css" />
+    <script type="module">
+      import '../src/register.ts';
+    </script>
+  </head>
+  <body>
+    <h1>&lt;pixel-video&gt;</h1>
+    <p>Hover the pictures. <a href="./react.html">React version →</a></p>
+
+    <h2>Defaults</h2>
+    <pixel-video>
+      <source src="./eyes.webm" type="video/webm" />
+      <source src="./eyes.mp4" type="video/mp4" />
+    </pixel-video>
+
+    <h2>preset="Mono"</h2>
+    <pixel-video preset="Mono">
+      <source src="./eyes.webm" type="video/webm" />
+      <source src="./eyes.mp4" type="video/mp4" />
+    </pixel-video>
+
+    <h2>settings (pasted from the lab's “Copy HTML snippet”)</h2>
+    <pixel-video
+      settings='{"bgFill":"#1d1d6b","midFill":"#1d1d6b","highFill":"#7cf2c8","highSize":6,"hoverRadius":220}'
+    >
+      <source src="./eyes.webm" type="video/webm" />
+      <source src="./eyes.mp4" type="video/mp4" />
+    </pixel-video>
+
+    <h2>A fixed height (the page's CSS wins over the source's aspect ratio)</h2>
+    <pixel-video style="height: 240px; aspect-ratio: auto">
+      <source src="./eyes.webm" type="video/webm" />
+      <source src="./eyes.mp4" type="video/mp4" />
+    </pixel-video>
+  </body>
+</html>

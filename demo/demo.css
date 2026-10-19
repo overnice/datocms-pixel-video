@@ -1,0 +1,24 @@
+body {
+  margin: 0 auto;
+  padding: 32px 16px 96px;
+  max-width: 880px;
+  font: 16px/1.5 system-ui, sans-serif;
+  color: #242424;
+  background: #fbfbf8;
+}
+h2 {
+  margin-top: 48px;
+  font-size: 16px;
+  font-weight: 500;
+}
+pixel-video {
+  border-radius: 3px;
+}
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+button[aria-pressed='true'] {
+  font-weight: 600;
+}
