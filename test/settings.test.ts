@@ -14,9 +14,13 @@ describe('resolveSettings', () => {
     expect(DEFAULTS.highFill).toBe('var(--color-yellow-5, #e7d864)');
   });
 
-  it('keeps background strokes on by default, and lets them be turned off', () => {
-    expect(DEFAULTS.bgStrokeDisabled).toBe(false);
-    expect(resolveSettings({ bgStrokeDisabled: true }).bgStrokeDisabled).toBe(true);
+  it("keeps every layer's strokes on by default, and lets each be turned off", () => {
+    for (const key of ['bgStrokeDisabled', 'midStrokeDisabled', 'highStrokeDisabled'] as const) {
+      expect(DEFAULTS[key]).toBe(false);
+      const out = resolveSettings({ [key]: true });
+      expect(out[key]).toBe(true);
+      expect(out).toEqual({ ...DEFAULTS, [key]: true });
+    }
   });
 
   it('applies settings over the defaults', () => {

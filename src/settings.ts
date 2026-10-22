@@ -26,12 +26,17 @@ export interface PixelVideoSettings {
   midSize: number;
   midFill: string;
   midStroke: string;
+  /** Draw the midtones layer's squares without strokes. */
+  midStrokeDisabled: boolean;
 
   highSize: number;
   highFill: string;
   highStroke: string;
+  /** Draw the highlights layer's squares without strokes. */
+  highStrokeDisabled: boolean;
 
-  /** Stroke weight of every layer's squares (and the lens), in px. */
+  /** Stroke weight of every layer's squares (and the lens), in px. A layer
+   *  with `…StrokeDisabled` set has none. */
   strokeWeight: number;
 
   /** Show the pointer lens. */
@@ -62,10 +67,12 @@ export const DEFAULTS: Readonly<PixelVideoSettings> = Object.freeze({
   midSize: 10,
   midFill: ORANGE,
   midStroke: BROWN,
+  midStrokeDisabled: false,
 
   highSize: 12,
   highFill: YELLOW,
   highStroke: BROWN,
+  highStrokeDisabled: false,
 
   strokeWeight: 1,
 

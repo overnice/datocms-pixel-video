@@ -83,12 +83,11 @@ uniform vec2 uDraw;
 uniform float uSize[3];       // per layer, device px
 uniform vec4 uFill[3];        // straight (not premultiplied) alpha
 uniform vec4 uStroke[3];
-uniform float uWeight;        // stroke weight, all layers, device px
-uniform bool uBgNoStroke;     // background layer drawn without strokes
+uniform float uWeight[3];     // stroke weight per layer, device px (0 = no stroke)
 
-// Half the stroke weight of a layer's squares (0 = no stroke).
+// Half the stroke weight of a layer's squares.
 float halfWeight(int L) {
-  return L == 0 && uBgNoStroke ? 0.0 : uWeight * 0.5;
+  return uWeight[L] * 0.5;
 }
 
 uniform bool uHover;
@@ -414,6 +413,7 @@ export function mountPixelVideo(
   const size = new Float32Array(3);
   const fill = new Float32Array(12);
   const stroke = new Float32Array(12);
+  const weight = new Float32Array(3);
 
   return {
     setSource(el) {
@@ -467,12 +467,13 @@ export function mountPixelVideo(
         size[i] = Math.max(1, v[`${l}Size`] * dpr);
         fill.set(parseColor(v[`${l}Fill`]), i * 4);
         stroke.set(parseColor(v[`${l}Stroke`]), i * 4);
+        // One shared weight; a layer with its stroke disabled gets none.
+        weight[i] = v[`${l}StrokeDisabled`] ? 0 : v.strokeWeight * dpr;
       });
       gl.uniform1fv(u('uSize'), size);
       gl.uniform4fv(u('uFill'), fill);
       gl.uniform4fv(u('uStroke'), stroke);
-      gl.uniform1f(u('uWeight'), v.strokeWeight * dpr);
-      gl.uniform1i(u('uBgNoStroke'), v.bgStrokeDisabled ? 1 : 0);
+      gl.uniform1fv(u('uWeight'), weight);
 
       gl.uniform1f(u('uTime'), time * v.hoverSpeed);
       gl.uniform1f(u('uRadius'), v.hoverRadius * dpr);

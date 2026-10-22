@@ -15,7 +15,7 @@ Install it straight from GitHub (it isn't on the npm registry). The build runs
 on install, and no GitHub account or token is needed: the repository is public.
 
 ```bash
-npm i github:overnice/datocms-pixel-video#v0.3.2
+npm i github:overnice/datocms-pixel-video#v0.3.3
 ```
 
 To update, run the same command with the newer release tag. Prefer not to add a
@@ -25,7 +25,7 @@ dependency? Copy the component into your codebase instead (see below).
 
 The component has no dependencies (React only for the React wrapper), so you
 can copy its files into your project and import them like your own code. Copy
-from a release tag (for example `v0.3.2`), not from `main`, and note the version
+from a release tag (for example `v0.3.3`), not from `main`, and note the version
 you copied.
 
 ### Option A: the source files (TypeScript projects)
@@ -66,7 +66,7 @@ else in the usage guide below applies unchanged.
 Build the release once and copy the single file it produces:
 
 ```bash
-git clone --branch v0.3.2 https://github.com/overnice/datocms-pixel-video.git
+git clone --branch v0.3.3 https://github.com/overnice/datocms-pixel-video.git
 cd datocms-pixel-video && npm install && npm run build
 # copy dist/pixel-video.global.js into your site, e.g. public/js/
 ```
@@ -249,9 +249,10 @@ Settings, with their defaults in `src/settings.ts`:
 
 - **Source:** `smoothing`, and the thresholds `tMid` (background below it) and
   `tHigh` (midtones below it, highlights above), as brightness 0–255.
-- **Each layer:** `{bg,mid,high}` + `Size`, `Fill`, `Stroke`.
+- **Each layer:** `{bg,mid,high}` + `Size`, `Fill`, `Stroke`, `StrokeDisabled`.
 - **Strokes:** `strokeWeight`, the same for every layer and the lens.
-  `bgStrokeDisabled: true` draws the background layer without strokes.
+  `bgStrokeDisabled` / `midStrokeDisabled` / `highStrokeDisabled: true` draws
+  that layer (and its squares in the lens) without strokes.
 - **Hover lens:** `hover`, `hoverRadius`, `hoverDistortion`, `hoverSpeed`,
   `hoverPixelSize`, `hoverFalloff`.
 
